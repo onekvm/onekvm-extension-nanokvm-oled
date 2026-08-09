@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NanoKVM OLED</title>
+    <link rel="stylesheet" href="oled.css">
+    <script src="font-cjk-12.js" defer></script>
+    <script src="oled.js" defer></script>
+  </head>
+  <body>
+    <main class="designer">
+      <div id="error" class="alert hidden" role="alert"></div>
+
+      <section class="card preview-card">
+        <header class="section-head">
+          <div>
+            <h1 data-i18n="title">NanoKVM OLED canvas</h1>
+            <p data-i18n="previewHint">Drag elements on the pixel canvas · Shift/Ctrl-click to multi-select · preview follows viewing direction</p>
+          </div>
+          <div class="display-controls">
+            <div class="direction-control">
+              <span data-i18n="direction">Viewing direction</span>
+              <div id="rotation-select-host" class="rotation-select-host"></div>
+            </div>
+            <div class="display-toggle-control">
+              <span data-i18n="display">Enable OLED</span>
+              <label class="switch-row compact">
+                <span class="sr-only" data-i18n="display">Enable OLED</span>
+                <input id="display-enabled" type="checkbox">
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+            </div>
+          </div>
+        </header>
+        <div class="canvas-workspace">
+          <div class="canvas-column">
+            <div class="canvas-stage">
+              <div id="floating-toolbar" class="floating-toolbar hidden" role="toolbar" aria-label="Selected layer tools" data-i18n-aria-label="selectedLayerTools">
+                <span id="toolbar-kind" class="toolbar-kind"></span>
+                <label id="toolbar-name-control" class="toolbar-control toolbar-name-control">
+                  <span class="sr-only" data-i18n="layerName">Layer name</span>
+                  <input id="toolbar-name" maxlength="64" data-i18n-title="layerName" title="Layer name">
+                </label>
+                <label id="toolbar-content-control" class="toolbar-control toolbar-content-control hidden">
+                  <span class="sr-only" data-i18n="content">Content</span>
+                  <input id="toolbar-content" maxlength="128" data-i18n-title="content" title="Content">
+                </label>
+                <div id="toolbar-coordinates" class="toolbar-coordinates">
+                  <label><span>X</span><input id="toolbar-x" type="number" min="0" max="63" step="1" aria-label="X"></label>
+                  <label><span>Y</span><input id="toolbar-y" type="number" min="0" max="63" step="1" aria-label="Y"></label>
+                </div>
+                <label id="toolbar-scale-control" class="toolbar-control toolbar-compact hidden">
+                  <span class="sr-only" data-i18n="scale">Scale</span>
+                  <select id="toolbar-scale" data-i18n-title="scale" title="Scale"><option value="1">1×</option><option value="2">2×</option></select>
+                </label>
+                <label id="toolbar-font-width-control" class="toolbar-control toolbar-font-width-control hidden">
+                  <span class="sr-only" data-i18n="fontWidth">Font width</span>
+                  <select id="toolbar-font-width" data-i18n-title="fontWidth" title="Font width">
+                    <option value="3">3×5</option>
+                    <option value="4">4×5</option>
+                    <option value="5">5×5</option>
+                  </select>
+                </label>
+                <label id="toolbar-align-control" class="toolbar-control toolbar-compact hidden">
+                  <span class="sr-only" data-i18n="alignment">Alignment</span>
+                  <select id="toolbar-align" data-i18n-title="alignment" title="Alignment">
+                    <option value="left" data-i18n="alignLeft">Left</option>
+                    <option value="center" data-i18n="alignCenter">Center</option>
+                    <option value="right" data-i18n="alignRight">Right</option>
+                  </select>
+                </label>
+                <label id="toolbar-filled-control" class="toolbar-toggle hidden" data-i18n-title="filled" title="Filled">
+                  <input id="toolbar-filled" type="checkbox"><span data-i18n="filled">Filled</span>
+                </label>
+                <label id="toolbar-mode-control" class="toolbar-control toolbar-mode-control hidden">
+                  <span class="sr-only" data-i18n="graphicMode">Graphic mode</span>
+                  <select id="toolbar-mode" data-i18n-title="graphicMode" title="Graphic mode">
+                    <option value="custom" data-i18n="customGraphic">Custom pixels</option>
+                    <option value="eth" data-i18n="ethStatus">ETH status</option>
+                    <option value="hdmi" data-i18n="hdmiStatus">HDMI status</option>
+                    <option value="hid" data-i18n="hidStatus">HID status</option>
+                    <option value="wifi" data-i18n="wifiStatus">Wi-Fi status</option>
+                    <option value="live" data-i18n="liveStatus">ON LIVE</option>
+                  </select>
+                </label>
+                <div class="toolbar-layout-actions">
+                  <button id="center-horizontal" type="button" class="icon-button" data-i18n-title="centerHorizontal" title="Center horizontally">↔</button>
+                  <button id="center-vertical" type="button" class="icon-button" data-i18n-title="centerVertical" title="Center vertically">↕</button>
+                  <button id="distribute-horizontal" type="button" class="icon-button" data-i18n-title="distributeHorizontal" title="Distribute horizontal spacing">⇔</button>
+                  <button id="distribute-vertical" type="button" class="icon-button" data-i18n-title="distributeVertical" title="Distribute vertical spacing">⇕</button>
+                </div>
+                <div class="toolbar-actions">
+                  <button id="copy-element" type="button" class="icon-button" data-i18n-title="copy" title="Copy">⧉</button>
+                  <button id="paste-element" type="button" class="icon-button" data-i18n-title="paste" title="Paste">▣</button>
+                  <button id="move-down" type="button" class="icon-button" data-i18n-title="moveDown" title="Move backward">↓</button>
+                  <button id="move-up" type="button" class="icon-button" data-i18n-title="moveUp" title="Move forward">↑</button>
+                  <button id="delete-element" type="button" class="danger icon-button" data-i18n-title="delete" title="Delete">×</button>
+                </div>
+              </div>
+              <div id="oled-shell" class="oled-shell" data-rotation="0">
+                <canvas id="preview" width="256" height="128" tabindex="0" aria-label="OLED canvas preview" data-i18n-aria-label="canvasPreview"></canvas>
+              </div>
+            </div>
+
+            <section id="toolbar-details" class="toolbar-details hidden">
+              <div id="inspector-fields" class="inspector-fields">
+                <div id="text-properties" class="type-properties">
+                  <label class="field"><span data-i18n="textAreaWidth">Text area width</span><input id="element-text-width" type="number" min="1" max="64" step="1"></label>
+                  <label class="check-row"><input id="element-full-width" type="checkbox"><span data-i18n="fullWidth">Full width</span></label>
+                  <div class="tokens">
+                    <span data-i18n="insert">Insert variable:</span>
+                    <button type="button" data-token="{ip}">{ip}</button>
+                    <button type="button" data-token="{hostname}">{hostname}</button>
+                    <button type="button" data-token="{codec}">{codec}</button>
+                    <button type="button" data-token="{fps}">{fps}</button>
+                    <button type="button" data-token="{resolution}">{resolution}</button>
+                    <button type="button" data-token="{stream}">{stream}</button>
+                    <button type="button" data-token="{uptime}">{uptime}</button>
+                  </div>
+                </div>
+
+                <div id="line-properties" class="type-properties hidden">
+                  <div class="coordinate-grid">
+                    <label><span>X2</span><input id="element-x2" type="number" min="0" max="63" step="1"></label>
+                    <label><span>Y2</span><input id="element-y2" type="number" min="0" max="63" step="1"></label>
+                  </div>
+                </div>
+
+                <div id="rect-properties" class="type-properties hidden">
+                  <div class="coordinate-grid">
+                    <label><span data-i18n="width">Width</span><input id="element-width" type="number" min="1" max="64" step="1"></label>
+                    <label><span data-i18n="height">Height</span><input id="element-height" type="number" min="1" max="64" step="1"></label>
+                  </div>
+                </div>
+
+                <div id="graphic-properties" class="type-properties hidden">
+                  <p id="graphic-status" class="graphic-status hidden"></p>
+                  <div id="graphic-status-properties" class="graphic-status-properties hidden">
+                    <label class="field"><span data-i18n="statusContent">Status content</span>
+                      <select id="element-graphic-content">
+                        <option value="text" data-i18n="textContent">Text</option>
+                        <option value="custom" data-i18n="customGraphic">Custom pixels</option>
+                      </select>
+                    </label>
+                    <div class="status-style-options">
+                      <label class="check-row"><input id="element-graphic-filled" type="checkbox"><span data-i18n="fillWhenConnected">Fill and invert when connected</span></label>
+                      <label class="check-row"><input id="element-graphic-bordered" type="checkbox"><span data-i18n="borderWhenConnected">Add border when connected</span></label>
+                    </div>
+                    <p class="field-hint" data-i18n="statusStyleHint">Fill lights the background and turns off the content pixels. The content position stays fixed when status changes.</p>
+                  </div>
+                  <div id="graphic-custom-properties" class="graphic-custom-properties">
+                    <div class="coordinate-grid">
+                      <label><span data-i18n="width">Width</span><input id="element-graphic-width" type="number" min="1" max="64" step="1"></label>
+                      <label><span data-i18n="height">Height</span><input id="element-graphic-height" type="number" min="1" max="64" step="1"></label>
+                    </div>
+                    <div class="bitmap-head">
+                      <span data-i18n="pixelEditor">Pixel editor</span>
+                      <div class="bitmap-actions">
+                        <button id="bitmap-clear" type="button" data-i18n="clearPixels">Clear</button>
+                        <button id="bitmap-fill" type="button" data-i18n="fillPixels">Fill</button>
+                        <button id="bitmap-invert" type="button" data-i18n="invertPixels">Invert</button>
+                      </div>
+                    </div>
+                    <canvas id="bitmap-editor" width="192" height="96" tabindex="0" aria-label="Custom pixel graphic editor" data-i18n-aria-label="customPixelEditor"></canvas>
+                    <p class="field-hint" data-i18n="pixelHint">Click or drag to draw; start on a lit pixel to erase.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="canvas-layers">
+            <header class="panel-head">
+              <div>
+                <h2 data-i18n="layers">Layers</h2>
+                <p id="element-count">0 / 32</p>
+              </div>
+              <div id="add-layer-menu-host" class="add-layer-menu-host"></div>
+            </header>
+            <div id="elements-list" class="elements-list" role="listbox" aria-multiselectable="true" aria-label="OLED layers" data-i18n-aria-label="canvasLayers"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="options-grid">
+        <div class="card option">
+          <label for="sleep" data-i18n="sleep">Turn off after no visible changes</label>
+          <input id="sleep" type="number" min="0" max="86400" step="1" list="sleep-presets" inputmode="numeric">
+          <datalist id="sleep-presets">
+            <option value="0"></option>
+            <option value="15"></option>
+            <option value="30"></option>
+            <option value="60"></option>
+            <option value="300"></option>
+            <option value="600"></option>
+            <option value="3600"></option>
+          </datalist>
+          <p class="field-hint" data-i18n="sleepHint">Seconds; enter 0 to never turn off.</p>
+        </div>
+
+        <div class="card burn-in-card">
+          <div>
+            <strong data-i18n="burnIn">Burn-in protection</strong>
+            <p data-i18n="burnInHint">Moves only the physical OLED image by one pixel every 60 seconds. The design preview stays still.</p>
+          </div>
+          <label class="switch-row icon-only">
+            <span class="sr-only" data-i18n="burnIn">Burn-in protection</span>
+            <input id="burn-in" type="checkbox">
+            <span class="switch" aria-hidden="true"></span>
+          </label>
+        </div>
+      </section>
+
+      <footer class="actions">
+        <span id="save-state" aria-live="polite"></span>
+        <button id="reload" type="button" class="secondary" data-i18n="reload">Reload</button>
+        <button id="save" type="button" class="primary" data-i18n="save">Save canvas</button>
+      </footer>
+    </main>
+  </body>
+</html>

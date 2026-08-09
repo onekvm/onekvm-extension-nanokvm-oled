@@ -1,0 +1,65 @@
+{
+  "id": "nanokvm-oled",
+  "i18n": {
+    "default": {
+      "name": "NanoKVM OLED",
+      "description": "Designs and controls the NanoKVM OLED pixel canvas, viewing direction, sleep behavior, and burn-in protection."
+    },
+    "zh": {
+      "name": "NanoKVM OLED",
+      "description": "设计并控制 NanoKVM OLED 像素画布、观看方向、自动熄屏和防烧屏保护。"
+    }
+  },
+  "version": "@VERSION@",
+  "api_version": 2,
+  "architecture": "@ARCH@",
+  "device_variants": ["pcie", "cube"],
+  "default_enabled": true,
+  "kind": "service",
+  "author": "OneKVM",
+  "homepage": "https://github.com/onekvm/onekvm-extension-nanokvm-oled",
+  "entrypoint": "bin/onekvm-nanokvm-oled",
+  "permissions": ["device-i2c"],
+  "capabilities": [],
+  "services": [{
+    "id": "display",
+    "i18n": {
+      "default": {"name": "OLED display", "description": "NanoKVM OLED status display service."},
+      "zh": {"name": "OLED 显示", "description": "NanoKVM OLED 状态显示服务。"}
+    }
+  }],
+  "page": {
+    "title": "OLED",
+    "renderer": "vue",
+    "entrypoint": "web/oled-page.js",
+    "icon": {"source": "lucide", "name": "monitor"}
+  },
+  "settings_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "display_enabled", "burn_in_protection", "rotation",
+      "sleep_seconds", "layout_json"
+    ],
+    "properties": {
+      "display_enabled": {"type": "boolean", "title": "Display", "default": true},
+      "burn_in_protection": {"type": "boolean", "title": "Burn-in protection", "default": true},
+      "rotation": {"type": "integer", "title": "Viewing direction", "default": 0, "minimum": 0, "maximum": 270},
+      "sleep_seconds": {"type": "integer", "title": "Automatic screen-off", "default": 3600, "minimum": 0, "maximum": 86400},
+      "layout_json": {"type": "string", "title": "Canvas layout", "default": "", "maxLength": 4096},
+      "brightness": {"type": "integer", "title": "Legacy brightness", "minimum": 1, "maximum": 100, "readOnly": true},
+      "line1": {"type": "string", "title": "Legacy line 1", "maxLength": 64, "readOnly": true},
+      "line2": {"type": "string", "title": "Legacy line 2", "maxLength": 64, "readOnly": true},
+      "line3": {"type": "string", "title": "Legacy line 3", "maxLength": 64, "readOnly": true},
+      "line4": {"type": "string", "title": "Legacy line 4", "maxLength": 64, "readOnly": true}
+    }
+  },
+  "secret_fields": [],
+  "memory_budget": "2M",
+  "resource_limits": {"memory_max": "16M", "cpu_quota": "10%", "tasks_max": 8, "limit_nofile": 32},
+  "healthcheck": {
+    "type": "exec",
+    "command": ["bin/onekvm-nanokvm-oled", "--health"],
+    "timeout_seconds": 8
+  }
+}

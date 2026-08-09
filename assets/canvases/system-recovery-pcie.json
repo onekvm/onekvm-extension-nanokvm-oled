@@ -1,0 +1,37 @@
+{
+  "format": "onekvm-oled-layers",
+  "version": 1,
+  "purpose": "system-recovery",
+  "device_variant": "pcie",
+  "screen": {
+    "width": 64,
+    "height": 32,
+    "rotation": 180
+  },
+  "elements": [
+    {
+      "id": "text1",
+      "type": "text",
+      "x": 0,
+      "y": 9,
+      "text": "Recovery",
+      "scale": 1,
+      "font_width": 5,
+      "width": 61,
+      "full_width": true,
+      "align": "center"
+    },
+    {
+      "id": "text2",
+      "type": "text",
+      "x": 0,
+      "y": 17,
+      "text": "MODE",
+      "scale": 1,
+      "font_width": 5,
+      "width": 24,
+      "full_width": true,
+      "align": "center"
+    }
+  ]
+}

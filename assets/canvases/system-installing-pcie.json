@@ -1,0 +1,49 @@
+{
+  "format": "onekvm-oled-layers",
+  "version": 1,
+  "purpose": "system-installing",
+  "device_variant": "pcie",
+  "screen": {
+    "width": 64,
+    "height": 32,
+    "rotation": 0
+  },
+  "elements": [
+    {
+      "id": "text3",
+      "type": "text",
+      "x": 0,
+      "y": 6,
+      "text": "PLEASE WAIT",
+      "scale": 1,
+      "font_width": 5,
+      "width": 24,
+      "full_width": true,
+      "align": "center"
+    },
+    {
+      "id": "text4",
+      "type": "text",
+      "x": 0,
+      "y": 14,
+      "text": "INSTALLING",
+      "scale": 1,
+      "font_width": 4,
+      "width": 24,
+      "full_width": true,
+      "align": "center"
+    },
+    {
+      "id": "text5",
+      "type": "text",
+      "x": 0,
+      "y": 22,
+      "text": "OS",
+      "scale": 1,
+      "font_width": 5,
+      "width": 24,
+      "full_width": true,
+      "align": "center"
+    }
+  ]
+}

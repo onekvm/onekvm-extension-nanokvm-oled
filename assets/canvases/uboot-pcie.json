@@ -1,0 +1,37 @@
+{
+  "format": "onekvm-oled-layers",
+  "version": 1,
+  "purpose": "uboot",
+  "device_variant": "pcie",
+  "screen": {
+    "width": 64,
+    "height": 32,
+    "rotation": 0
+  },
+  "elements": [
+    {
+      "id": "text3",
+      "type": "text",
+      "x": 0,
+      "y": 17,
+      "text": "PLEASE WAIT",
+      "scale": 1,
+      "font_width": 5,
+      "width": 24,
+      "full_width": true,
+      "align": "center"
+    },
+    {
+      "id": "text4",
+      "type": "text",
+      "x": 0,
+      "y": 9,
+      "text": "BOOTING",
+      "scale": 1,
+      "font_width": 5,
+      "width": 24,
+      "full_width": true,
+      "align": "center"
+    }
+  ]
+}

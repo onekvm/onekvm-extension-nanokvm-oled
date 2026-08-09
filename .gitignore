@@ -1,0 +1,23 @@
+# Node.js
+/node_modules/
+npm-debug.log*
+
+# C++ build and test output
+/onekvm-nanokvm-oled
+/tests/test_main
+
+# Rendered/package output
+/manifest.json
+/web/dist/
+*.ipk
+*.ipks
+
+# Python tool caches
+__pycache__/
+*.py[cod]
+
+# Local editor and OS files
+.DS_Store
+*.swp
+*.swo
+*~
