@@ -31,7 +31,7 @@ test: web tests/test_main
 tests/test_main: tests/test_main.cpp $(SOURCES) $(HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ tests/test_main.cpp $(SOURCES) $(LDLIBS)
 
-install: $(BINARY)
+install: web $(BINARY)
 	test -f web/dist/oled-page.js
 	install -Dm0755 $(BINARY) $(DESTDIR)$(PREFIX)/bin/onekvm-nanokvm-oled
 	install -Dm0644 web/dist/oled-page.js $(DESTDIR)$(PREFIX)/web/oled-page.js
