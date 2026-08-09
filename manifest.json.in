@@ -13,7 +13,12 @@
   "version": "@VERSION@",
   "api_version": 2,
   "architecture": "@ARCH@",
-  "device_variants": ["pcie", "cube"],
+  "device_compatibility": [
+    {
+      "machine": "nanokvm",
+      "variants": ["pcie", "cube"]
+    }
+  ],
   "default_enabled": true,
   "kind": "service",
   "author": "OneKVM",
