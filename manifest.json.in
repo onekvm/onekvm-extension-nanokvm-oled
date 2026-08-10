@@ -9,6 +9,10 @@
     "zh": {
       "name": "NanoKVM OLED",
       "description": "设计并控制 NanoKVM OLED 像素画布、观看方向、自动熄屏和防烧屏保护。"
+    },
+    "zh-TW": {
+      "name": "NanoKVM OLED",
+      "description": "設計並控制 NanoKVM OLED 像素畫布、觀看方向、自動熄屏和防燒屏保護。"
     }
   },
   "version": "@VERSION@",
@@ -31,7 +35,8 @@
     "id": "display",
     "i18n": {
       "default": {"name": "OLED display", "description": "NanoKVM OLED status display service."},
-      "zh": {"name": "OLED 显示", "description": "NanoKVM OLED 状态显示服务。"}
+      "zh": {"name": "OLED 显示", "description": "NanoKVM OLED 状态显示服务。"},
+      "zh-TW": {"name": "OLED 顯示", "description": "NanoKVM OLED 狀態顯示服務。"}
     }
   }],
   "page": {
@@ -48,16 +53,16 @@
       "sleep_seconds", "layout_json"
     ],
     "properties": {
-      "display_enabled": {"type": "boolean", "title": "Display", "default": true},
-      "burn_in_protection": {"type": "boolean", "title": "Burn-in protection", "default": true},
-      "rotation": {"type": "integer", "title": "Viewing direction", "default": 0, "minimum": 0, "maximum": 270},
-      "sleep_seconds": {"type": "integer", "title": "Automatic screen-off", "default": 3600, "minimum": 0, "maximum": 86400},
-      "layout_json": {"type": "string", "title": "Canvas layout", "default": "", "maxLength": 4096},
-      "brightness": {"type": "integer", "title": "Legacy brightness", "minimum": 1, "maximum": 100, "readOnly": true},
-      "line1": {"type": "string", "title": "Legacy line 1", "maxLength": 64, "readOnly": true},
-      "line2": {"type": "string", "title": "Legacy line 2", "maxLength": 64, "readOnly": true},
-      "line3": {"type": "string", "title": "Legacy line 3", "maxLength": 64, "readOnly": true},
-      "line4": {"type": "string", "title": "Legacy line 4", "maxLength": 64, "readOnly": true}
+      "display_enabled": {"type": "boolean", "title": "Display", "default": true, "i18n": {"default": "Display", "zh": "OLED 显示", "zh-TW": "OLED 顯示"}},
+      "burn_in_protection": {"type": "boolean", "title": "Burn-in protection", "default": true, "i18n": {"default": "Burn-in protection", "zh": "防烧屏保护", "zh-TW": "防燒屏保護"}},
+      "rotation": {"type": "integer", "title": "Viewing direction", "default": 0, "minimum": 0, "maximum": 270, "i18n": {"default": "Viewing direction", "zh": "观看方向", "zh-TW": "觀看方向"}},
+      "sleep_seconds": {"type": "integer", "title": "Automatic screen-off", "default": 3600, "minimum": 0, "maximum": 86400, "i18n": {"default": "Automatic screen-off", "zh": "自动熄屏", "zh-TW": "自動熄屏"}},
+      "layout_json": {"type": "string", "title": "Canvas layout", "default": "", "maxLength": 4096, "i18n": {"default": "Canvas layout", "zh": "画布布局", "zh-TW": "畫布配置"}},
+      "brightness": {"type": "integer", "title": "Legacy brightness", "minimum": 1, "maximum": 100, "readOnly": true, "i18n": {"default": "Legacy brightness", "zh": "旧版亮度", "zh-TW": "舊版亮度"}},
+      "line1": {"type": "string", "title": "Legacy line 1", "maxLength": 64, "readOnly": true, "i18n": {"default": "Legacy line 1", "zh": "旧版第 1 行", "zh-TW": "舊版第 1 行"}},
+      "line2": {"type": "string", "title": "Legacy line 2", "maxLength": 64, "readOnly": true, "i18n": {"default": "Legacy line 2", "zh": "旧版第 2 行", "zh-TW": "舊版第 2 行"}},
+      "line3": {"type": "string", "title": "Legacy line 3", "maxLength": 64, "readOnly": true, "i18n": {"default": "Legacy line 3", "zh": "旧版第 3 行", "zh-TW": "舊版第 3 行"}},
+      "line4": {"type": "string", "title": "Legacy line 4", "maxLength": 64, "readOnly": true, "i18n": {"default": "Legacy line 4", "zh": "旧版第 4 行", "zh-TW": "舊版第 4 行"}}
     }
   },
   "secret_fields": [],
