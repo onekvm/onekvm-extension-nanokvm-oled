@@ -60,6 +60,16 @@ onekvm-plugin-manager disable nanokvm-oled
 
 OneKVM 会把扩展版本写入 Web 资源 URL，并把这些资源标记为不可变缓存。因此，只要修改了 `web/` 下的内容，就必须同步提升 manifest 和软件包版本。只增加 package revision，浏览器仍可能继续使用旧版画布代码。
 
+安装锁定版本的 Web 依赖，然后构建并运行原生与浏览器测试：
+
+```sh
+npm ci
+make test
+```
+
+原生构建需要支持 C++20 的编译器和 `libsystemd` 开发文件。`make test` 还会
+先检查类型并打包 Vue 页面，再运行 C++ 和 Node.js 测试。
+
 ## 许可证
 
 本项目使用 GNU General Public License v3.0，完整条款见 [`LICENSE`](LICENSE)。

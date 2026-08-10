@@ -60,6 +60,18 @@ The browser preview and C++ renderer share the same font data so their output re
 
 OneKVM includes the extension version in web asset URLs and marks those assets as immutable. Whenever files under `web/` change, increment the manifest/package version as well. Increasing only the package revision can leave browsers using an older cached version of the canvas code.
 
+Install the pinned web dependencies, then build and run the native and browser
+tests with:
+
+```sh
+npm ci
+make test
+```
+
+The native build requires a C++20 compiler and the `libsystemd` development
+files. `make test` also type-checks and bundles the Vue page before running the
+C++ and Node.js tests.
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE).
