@@ -5,8 +5,11 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <atomic>
 
 namespace onekvm::oled {
+
+extern std::atomic_bool stopped;
 
 uint64_t waitTimeoutUsec(Clock::time_point now, Clock::time_point deadline);
 bool decodeStatus(std::string_view payload, Status &status,

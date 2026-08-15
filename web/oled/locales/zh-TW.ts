@@ -1,9 +1,11 @@
 import type { Messages } from './en'
 
 const messages = {
-  title: 'NanoKVM OLED 畫布',
+  title: 'NanoKVM OLED 畫布', canvasTab: '畫布', mediaTab: '素材庫', animation: '動圖', addAnimation: '動圖', animationAsset: '動圖素材', selectAnimationAsset: '選擇已上傳的動圖',
   previewHint: '可拖曳元素 · Shift/Ctrl 點選多選 · 預覽跟隨觀看方向',
   selectedLayerTools: '所選圖層工具',
+  toolbarEmptyHint: '暫無圖層，請先新增圖層。',
+  toolbarSelectHint: '點擊圖層元素以顯示操作選項。',
   canvasPreview: 'OLED 畫布預覽',
   canvasLayers: 'OLED 圖層',
   customPixelEditor: '自訂像素圖形編輯器',
@@ -77,6 +79,20 @@ const messages = {
   fillPixels: '全部點亮',
   invertPixels: '反轉',
   pixelHint: '點選或拖曳以繪製；從已點亮的像素開始可擦除。',
+  importImage: '從圖片匯入',
+  inputPreview: '輸入預覽',
+  cropSelection: '圖片框選區域',
+  cropHint: '拖曳以框選輸入區域；指定固定尺寸後，拖曳選框可調整位置。',
+  fixedCropSize: '固定框選尺寸',
+  cropWidth: '框選寬度',
+  cropHeight: '框選高度',
+  outputPreview: '輸出預覽',
+  outputWidth: '輸出寬度',
+  outputHeight: '輸出高度',
+  trimBlank: '裁切輸出空白邊緣',
+  applyImage: '套用圖片',
+  cancel: '取消',
+  confirmDelete: '確認刪除',
   connected: '已連線',
   disconnected: '未連線',
   unavailable: '無法使用',
@@ -90,6 +106,7 @@ const messages = {
   invalidImport: '所選檔案不是有效的 OneKVM OLED 圖層檔案。',
   importTooMany: '圖層檔案包含超過 32 個圖層。',
   imported: '圖層已匯入',
+  mediaKicker: '裝置素材庫', uploadCardTitle: '上傳與轉換', libraryTitle: '已儲存動圖', searchAssets: '搜尋素材', refreshAssets: '重新整理', savedAsset: '個素材', previewAsset: '網頁預覽', closePreview: '關閉預覽', playAsset: '在裝置播放', playingAsset: '正在播放', downloadAsset: '下載', assetDownloaded: '動圖已下載', uploadAssetFile: 'OLED 素材檔案', uploadAssetFileHint: '匯入已轉換的 .oan 檔案，預覽後再上傳到裝置。', chooseAssetFile: '選擇 .oan 檔案', invalidAssetFile: '所選檔案不是有效的 OLED 動圖素材。', renameAsset: '重新命名', assetName: '素材名稱', confirmRename: '確認重新命名', assetRenamed: '動圖已重新命名', invalidAssetName: '名稱只能包含字母、數字、點、底線和連字號。', assetNameExists: '已存在同名素材。', assetInUse: '畫布正在使用此動圖，請先從畫布移除並儲存，然後再重新命名或刪除。', deleteAsset: '刪除', deleteAssetConfirm: '確定要從裝置刪除此動圖嗎？', assetDeleted: '動圖已刪除', ratioLocked: '已鎖定寬高比', ratioUnlocked: '已解鎖寬高比', mediaTitle: 'OLED 動圖素材庫', mediaHint: '先在瀏覽器本地轉換並預覽，再決定是否上傳到裝置。', chooseVideo: '選擇影片', dropVideo: '或將影片拖到這裡', noVideo: '尚未選擇影片', mediaResolution: 'OLED 解析度', mediaCustomResolution: '自訂', mediaCustomWidth: '寬度', mediaCustomHeight: '高度', mediaAdvanced: '進階選項', mediaFps: '影格率', mediaFit: '適配方式', fitContain: '保持比例（留黑邊）', fitCover: '保持比例（裁切填滿）', convertVideo: '轉換並預覽', cancelConversion: '取消轉換', conversionCancelled: '已取消轉換', uploadAsset: '上傳到裝置', reuploadAsset: '重新上傳', previewBeforeUpload: 'OLED 螢幕預覽已就緒。', convertingVideo: '正在轉換 {percent}% · {frames} 幀 · 預計還需 {eta}', convertingPercent: '進度 {percent}%', convertingFrames: '{frames} / {total} 幀', convertingEta: '預計還需 {eta}', previewReady: '預覽就緒 · {frames} 幀 · {size}', assetReady: '已上傳 · {frames} 幀 · {size}', noAssets: '還沒有動圖素材。', assetLibraryError: '無法開啟裝置素材庫。', assetTooLarge: '轉換後的動圖超過 32 MB 素材上限。',
 } as const satisfies Messages
 
 export default {

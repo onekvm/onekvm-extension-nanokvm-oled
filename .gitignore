@@ -4,6 +4,8 @@ npm-debug.log*
 
 # C++ build and test output
 /onekvm-nanokvm-oled
+/oled-play
+/oled-assets-riscv64
 /tests/test_main
 
 # Rendered/package output
@@ -11,6 +13,7 @@ npm-debug.log*
 /web/dist/
 *.ipk
 *.ipks
+/assets/*.mp4
 
 # Python tool caches
 __pycache__/

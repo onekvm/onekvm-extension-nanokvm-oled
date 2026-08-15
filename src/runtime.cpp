@@ -4,6 +4,7 @@
 #include "device.hpp"
 #include "renderer.hpp"
 #include "status_source.hpp"
+#include "assets.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,13 +12,19 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <limits>
 #include <optional>
 #include <signal.h>
+#include <sys/resource.h>
 #include <string>
 #include <string_view>
+#include <span>
+#include <thread>
+#include <unordered_map>
 #include <unistd.h>
 #include <utility>
 
@@ -46,6 +53,7 @@ struct Options {
   bool health = false;
   bool controller = false;
   bool off = false;
+  bool assetsServer = false;
 };
 
 std::string defaultConfigPath() {
@@ -165,6 +173,8 @@ bool parseOptions(int argc, char **argv, Options &options, std::string &error) {
       options.controller = true;
     else if (argument == "--off")
       options.off = true;
+    else if (argument == "--assets-server")
+      options.assetsServer = true;
     else {
       error = "unknown argument " + std::string(argument);
       return false;
@@ -176,8 +186,6 @@ bool parseOptions(int argc, char **argv, Options &options, std::string &error) {
 bool runHealth(const Options &options, std::string &error) {
   DisplayProfile profile;
   if (!resolveDisplayProfile(options, profile, error))
-    return false;
-  if (!chineseFont.load(defaultFontPath(), error))
     return false;
   Config config;
   std::string raw;
@@ -204,12 +212,248 @@ bool runHealth(const Options &options, std::string &error) {
   return true;
 }
 
+bool validPlaybackName(std::string_view name) {
+  return name.size() > 4 && name.size() <= 96 && name.ends_with(".oan") &&
+         std::all_of(name.begin(), name.end(), [](char c) {
+           return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+         });
+}
+
+bool readPlaybackRequest(const std::filesystem::path &requestPath,
+                         std::string &name) {
+  std::ifstream file(requestPath);
+  if (!file)
+    return false;
+  std::getline(file, name);
+  std::error_code ignored;
+  std::filesystem::remove(requestPath, ignored);
+  return validPlaybackName(name);
+}
+
+uint8_t reverseBits(uint8_t value) {
+  value = static_cast<uint8_t>((value >> 4) | (value << 4));
+  value = static_cast<uint8_t>(((value & 0xcc) >> 2) | ((value & 0x33) << 2));
+  return static_cast<uint8_t>(((value & 0xaa) >> 1) | ((value & 0x55) << 1));
+}
+
+bool frameToCanvas(std::span<const unsigned char> bytes, int width, int height,
+                   int displayWidth, int displayHeight, int rotation,
+                   Canvas &output, std::string &error) {
+  const std::size_t frameBytes = static_cast<std::size_t>(width) * height / 8;
+  if (bytes.size() != frameBytes) {
+    error = "could not read OLED animation";
+    return false;
+  }
+  output = Canvas(displayWidth, displayHeight);
+  const int originX = (displayWidth - width) / 2;
+  const int originY = (displayHeight - height) / 2;
+  // OAN frames use the same page-major byte layout as SSD1306 RAM. For the
+  // two common landscape orientations, copy whole pages instead of visiting
+  // every pixel and rebuilding the bit mask one pixel at a time.
+  if ((rotation == 0 || rotation == 180) && originX >= 0 && originY >= 0 &&
+      originX + width <= displayWidth && originY + height <= displayHeight &&
+      (originY % 8) == 0) {
+    auto &target = output.mutableData();
+    const int sourcePages = height / 8;
+    if (rotation == 0) {
+      for (int page = 0; page < sourcePages; ++page)
+        std::copy(bytes.begin() + page * width,
+                  bytes.begin() + (page + 1) * width,
+                  target.begin() + (originY / 8 + page) * displayWidth + originX);
+    } else {
+      const int displayPages = displayHeight / 8;
+      for (int page = 0; page < sourcePages; ++page) {
+        const int targetPage = displayPages - 1 - (originY / 8 + page);
+        for (int x = 0; x < width; ++x) {
+          const int targetX = displayWidth - 1 - (originX + x);
+          target[static_cast<std::size_t>(targetPage * displayWidth + targetX)] =
+              reverseBits(bytes[static_cast<std::size_t>(page * width + x)]);
+        }
+      }
+    }
+    return true;
+  }
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      if ((bytes[static_cast<std::size_t>((y >> 3) * width + x)] &
+           (1U << (y & 7))) == 0)
+        continue;
+      const int logicalX = originX + x;
+      const int logicalY = originY + y;
+      int targetX = logicalX;
+      int targetY = logicalY;
+      if (rotation == 90) { targetX = displayWidth - 1 - logicalY; targetY = logicalX; }
+      else if (rotation == 180) { targetX = displayWidth - 1 - logicalX; targetY = displayHeight - 1 - logicalY; }
+      else if (rotation == 270) { targetX = logicalY; targetY = displayHeight - 1 - logicalX; }
+      output.set(targetX, targetY);
+    }
+  }
+  return true;
+}
+
+bool playAsset(const std::filesystem::path &assetPath, Device &device,
+               const DisplayProfile &profile, int rotation, std::string &error) {
+  std::ifstream file(assetPath, std::ios::binary);
+  std::array<unsigned char, 14> header{};
+  file.read(reinterpret_cast<char *>(header.data()), header.size());
+  if (!file || std::string_view(reinterpret_cast<char *>(header.data()), 4) != "OAN1") {
+    error = "invalid OLED animation";
+    return false;
+  }
+  const int fps = static_cast<int>(header[8] | (header[9] << 8));
+  const uint32_t frames = static_cast<uint32_t>(header[10] | (header[11] << 8) |
+                                                 (header[12] << 16) | (header[13] << 24));
+  const int width = static_cast<int>(header[4] | (header[5] << 8));
+  const int height = static_cast<int>(header[6] | (header[7] << 8));
+  const std::size_t frameBytes = static_cast<std::size_t>(width) * height / 8;
+  if (fps <= 0 || frames == 0 || width < 8 || width > kMaxWidth || height < 8 ||
+      height > kMaxHeight || height % 8 != 0) {
+    error = "invalid OLED animation header";
+    return false;
+  }
+  std::vector<unsigned char> bytes(frameBytes);
+  std::optional<Canvas> previous;
+  for (uint32_t frame = 0; frame < frames && !stopped.load(); ++frame) {
+    file.read(reinterpret_cast<char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!file) { error = "could not read OLED animation"; return false; }
+    Canvas canvas;
+    if (!frameToCanvas(bytes, width, height, profile.width, profile.height,
+                       rotation, canvas, error))
+      return false;
+    if (previous.has_value()) {
+      if (!device.showChanged(*previous, canvas, error)) return false;
+    } else if (!device.show(canvas, error)) {
+      return false;
+    }
+    previous = canvas;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / fps));
+  }
+  return !stopped.load();
+}
+
+int deviceRotation(const DisplayProfile &profile, int rotation) {
+  return profile.variant == "cube" ? (rotation + 180) % 360 : rotation;
+}
+
+struct CachedAnimation {
+  int width = 0;
+  int height = 0;
+  int fps = 0;
+  uint32_t frames = 0;
+  std::ifstream file;
+  std::array<unsigned char, kMaxFrameBytes> frame{};
+};
+
+bool loadAnimation(const std::filesystem::path &path, CachedAnimation &output) {
+  output.file.open(path, std::ios::binary);
+  std::array<unsigned char, 14> header{};
+  output.file.read(reinterpret_cast<char *>(header.data()), header.size());
+  if (!output.file ||
+      std::string_view(reinterpret_cast<char *>(header.data()), 4) != "OAN1")
+    return false;
+  output.width = static_cast<int>(header[4] | (header[5] << 8));
+  output.height = static_cast<int>(header[6] | (header[7] << 8));
+  output.fps = static_cast<int>(header[8] | (header[9] << 8));
+  output.frames = static_cast<uint32_t>(header[10] | (header[11] << 8) |
+                                        (header[12] << 16) | (header[13] << 24));
+  if (output.width < 8 || output.width > kMaxWidth || output.height < 8 ||
+      output.height > kMaxHeight || output.height % 8 != 0 || output.fps <= 0 ||
+      output.frames == 0)
+    return false;
+  const std::size_t frameBytes = static_cast<std::size_t>(output.width) *
+                                 output.height / 8;
+  const std::size_t total = frameBytes * output.frames;
+  if (total > 32U * 1024U * 1024U || total / frameBytes != output.frames)
+    return false;
+  output.file.seekg(0, std::ios::end);
+  const std::streamoff fileSize = output.file.tellg();
+  output.file.clear();
+  return fileSize == static_cast<std::streamoff>(header.size() + total);
+}
+
+std::string animationPixels(std::span<const unsigned char> frame, int width,
+                             int height) {
+  std::string pixels(static_cast<std::size_t>(width) * height / 4, '0');
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      if ((frame[static_cast<std::size_t>((y >> 3) * width + x)] &
+           (1U << (y & 7))) == 0)
+        continue;
+      const std::size_t index = static_cast<std::size_t>(y * width + x);
+      const std::size_t nibble = index / 4;
+      const int shift = 3 - static_cast<int>(index % 4);
+      const int value = (pixels[nibble] >= 'A' ? pixels[nibble] - 'A' + 10
+                                               : pixels[nibble] - '0') |
+                        (1 << shift);
+      pixels[nibble] = static_cast<char>(value < 10 ? '0' + value
+                                                    : 'A' + value - 10);
+    }
+  }
+  return pixels;
+}
+
+void updateAnimationLayers(
+    Config &config, const std::filesystem::path &assetRoot,
+    Clock::time_point epoch,
+    std::unordered_map<std::string, CachedAnimation> &cache) {
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           Clock::now() - epoch)
+                           .count();
+  for (Element &element : config.layout.elements) {
+    if (element.hidden || element.type != "animation" || element.asset.empty())
+      continue;
+    auto found = cache.find(element.asset);
+    if (found == cache.end()) {
+      CachedAnimation animation;
+      if (!loadAnimation(assetRoot / element.asset, animation)) {
+        cache.emplace(element.asset, CachedAnimation{});
+        element.pixels.clear();
+        continue;
+      }
+      found = cache.emplace(element.asset, std::move(animation)).first;
+    }
+    CachedAnimation &animation = found->second;
+    if (animation.frames == 0 || animation.fps <= 0) {
+      element.pixels.clear();
+      continue;
+    }
+    const uint64_t frame = static_cast<uint64_t>(std::max<int64_t>(0, elapsed)) *
+                           static_cast<uint64_t>(animation.fps) / 1000U %
+                           animation.frames;
+    const std::size_t frameBytes = static_cast<std::size_t>(animation.width) *
+                                   animation.height / 8;
+    animation.file.clear();
+    animation.file.seekg(static_cast<std::streamoff>(14 + frame * frameBytes),
+                         std::ios::beg);
+    animation.file.read(reinterpret_cast<char *>(animation.frame.data()),
+                        static_cast<std::streamsize>(frameBytes));
+    if (animation.file.gcount() != static_cast<std::streamsize>(frameBytes)) {
+      element.pixels.clear();
+      continue;
+    }
+    element.width = animation.width;
+    element.height = animation.height;
+    element.pixels = animationPixels(
+        std::span<const unsigned char>(animation.frame.data(), frameBytes),
+        animation.width, animation.height);
+  }
+}
+
+bool hasAnimationLayers(const Config &config) {
+  return std::any_of(config.layout.elements.begin(), config.layout.elements.end(),
+                     [](const Element &element) {
+                       return !element.hidden && element.type == "animation" &&
+                              !element.asset.empty();
+                     });
+}
+
 bool runDisplay(const Options &options, std::string &error) {
   DisplayProfile profile;
   if (!resolveDisplayProfile(options, profile, error))
     return false;
-  if (!chineseFont.load(defaultFontPath(), error))
-    return false;
+  chineseFont.configure(defaultFontPath());
   Config config;
   std::string configRaw;
   if (!loadConfig(options.config, config, configRaw, error, profile.width,
@@ -232,8 +476,21 @@ bool runDisplay(const Options &options, std::string &error) {
   if (!openDisplay(device, profile.device, profile.address, 5s, error))
     return false;
   bool liveIndicatorOn = true;
-  Canvas frame = render(config, status, liveIndicatorOn, profile.width,
-                        profile.height);
+  const std::filesystem::path animationRoot =
+      std::getenv("ONEKVM_EXTENSION_DATA") != nullptr
+          ? std::filesystem::path(std::getenv("ONEKVM_EXTENSION_DATA")) / "assets"
+          : std::filesystem::path{};
+  const auto animationEpoch = Clock::now();
+  std::unordered_map<std::string, CachedAnimation> animationCache;
+  auto renderDisplayFrame = [&](const Config &source, const Status &current,
+                                bool live) {
+    Config animated = source;
+    updateAnimationLayers(animated, animationRoot, animationEpoch,
+                          animationCache);
+    animated.rotation = deviceRotation(profile, source.rotation);
+    return render(animated, current, live, profile.width, profile.height);
+  };
+  Canvas frame = renderDisplayFrame(config, status, liveIndicatorOn);
   bool awake = config.enabled;
   std::optional<Canvas> displayedFrame;
   if (awake) {
@@ -248,9 +505,17 @@ bool runDisplay(const Options &options, std::string &error) {
   Canvas lastFrame = frame;
   auto lastChange = Clock::now();
   auto nextConfig = Clock::now() + 500ms;
+  auto nextAnimation = hasAnimationLayers(config)
+                           ? Clock::now() + 33ms
+                           : Clock::time_point::max();
   auto nextShift = Clock::now() + options.shiftInterval;
   auto nextSleep = Clock::now() + 1s;
   auto nextLiveBlink = Clock::now() + 1s;
+  const char *extensionData = std::getenv("ONEKVM_EXTENSION_DATA");
+  const std::filesystem::path requestPath = extensionData != nullptr
+      ? std::filesystem::path(extensionData) / ".play.request"
+      : std::filesystem::path{};
+  auto nextPlayback = Clock::now();
   int shiftIndex = 0;
   static constexpr std::array<std::pair<int, int>, 4> shifts = {
       {{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
@@ -262,9 +527,9 @@ bool runDisplay(const Options &options, std::string &error) {
       return;
     }
     const Canvas off =
-        render(config, status, false, profile.width, profile.height);
+        renderDisplayFrame(config, status, false);
     const Canvas on =
-        render(config, status, true, profile.width, profile.height);
+        renderDisplayFrame(config, status, true);
     LiveFrameCache cache;
     for (std::size_t index = 0; index < shifts.size(); ++index) {
       cache[index][0] = off;
@@ -287,8 +552,8 @@ bool runDisplay(const Options &options, std::string &error) {
   refreshLiveFrames();
   auto apply = [&](const Config &nextConfigValue, const Status &nextStatus,
                    bool settingsChanged) -> bool {
-    Canvas nextFrame = render(nextConfigValue, nextStatus, liveIndicatorOn,
-                              profile.width, profile.height);
+    Canvas nextFrame = renderDisplayFrame(nextConfigValue, nextStatus,
+                                          liveIndicatorOn);
     const bool frameChanged = !(nextFrame == lastFrame);
     if (!nextConfigValue.enabled) {
       if (awake && !device.off(error))
@@ -297,6 +562,9 @@ bool runDisplay(const Options &options, std::string &error) {
       displayedFrame.reset();
       shiftIndex = 0;
       config = nextConfigValue;
+      nextAnimation = hasAnimationLayers(config)
+                          ? Clock::now() + 33ms
+                          : Clock::time_point::max();
       status = nextStatus;
       lastFrame = nextFrame;
       liveFrames.reset();
@@ -319,6 +587,9 @@ bool runDisplay(const Options &options, std::string &error) {
       lastChange = Clock::now();
     }
     config = nextConfigValue;
+    nextAnimation = hasAnimationLayers(config)
+                        ? Clock::now() + 33ms
+                        : Clock::time_point::max();
     status = nextStatus;
     lastFrame = nextFrame;
     if (!config.enabled || !status.active || !hasLiveLayer(config))
@@ -339,6 +610,25 @@ bool runDisplay(const Options &options, std::string &error) {
         return false;
     }
     const auto now = Clock::now();
+    if (!requestPath.empty() && now >= nextPlayback) {
+      std::string requested;
+      if (readPlaybackRequest(requestPath, requested)) {
+        const auto assetPath = std::filesystem::path(extensionData) / "assets" / requested;
+        if (std::filesystem::exists(assetPath)) {
+          if (!config.enabled && !device.initialize(error)) return false;
+          if (!playAsset(assetPath, device, profile,
+                         deviceRotation(profile, config.rotation), error))
+            return false;
+          if (config.enabled) {
+            if (!awake) { awake = true; displayedFrame = Canvas(profile.width, profile.height); }
+            if (!showVisible(lastFrame)) return false;
+          } else {
+            if (!device.off(error)) return false;
+          }
+        }
+      }
+      nextPlayback = now + 100ms;
+    }
     if (now >= nextConfig) {
       Config loaded;
       std::string raw;
@@ -351,6 +641,11 @@ bool runDisplay(const Options &options, std::string &error) {
         configRaw = std::move(raw);
       }
       nextConfig = now + 500ms;
+    }
+    if (now >= nextAnimation) {
+      if (!apply(config, status, false))
+        return false;
+      nextAnimation = now + 33ms;
     }
     if (now >= nextShift) {
       if (awake && config.enabled && config.burnInProtection) {
@@ -399,8 +694,8 @@ bool runDisplay(const Options &options, std::string &error) {
       }
       nextSleep = now + 1s;
     }
-    const auto nextWake =
-        std::min({nextConfig, nextShift, nextSleep, nextLiveBlink});
+    const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
+                                    nextLiveBlink, nextPlayback, nextAnimation});
     if (!source.waitUntil(nextWake, error))
       return false;
   }
@@ -408,6 +703,8 @@ bool runDisplay(const Options &options, std::string &error) {
 }
 
 int applicationMain(int argc, char **argv) {
+  // OLED updates are background work; keep video, HID and core services ahead.
+  (void)::setpriority(PRIO_PROCESS, 0, 19);
   Options options;
   std::string error;
   if (!parseOptions(argc, argv, options, error)) {
@@ -433,7 +730,12 @@ int applicationMain(int argc, char **argv) {
   bool success = false;
   if (options.health)
     success = runHealth(options, error);
-  else if (options.off) {
+  else if (options.assetsServer) {
+    const char *socket = std::getenv("ONEKVM_EXTENSION_SOCKET");
+    const char *data = std::getenv("ONEKVM_EXTENSION_DATA");
+    success = socket != nullptr && data != nullptr && runAssetServer(
+        std::string(socket) + "/assets.sock", std::string(data) + "/assets", error);
+  } else if (options.off) {
     DisplayProfile profile;
     success = resolveDisplayProfile(options, profile, error);
     if (success) {
@@ -442,8 +744,17 @@ int applicationMain(int argc, char **argv) {
                             error) &&
                 device.off(error);
     }
-  } else
+  } else {
+    const char *socket = std::getenv("ONEKVM_EXTENSION_SOCKET");
+    const char *data = std::getenv("ONEKVM_EXTENSION_DATA");
+    if (socket != nullptr && data != nullptr) {
+      std::thread([socketPath = std::string(socket), dataPath = std::string(data)] {
+        std::string ignored;
+        (void)runAssetServer(socketPath + "/assets.sock", dataPath + "/assets", ignored);
+      }).detach();
+    }
     success = runDisplay(options, error);
+  }
   if (!success) {
     std::cerr << "onekvm-nanokvm-oled: " << error << '\n';
     return 1;

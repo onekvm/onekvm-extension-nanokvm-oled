@@ -169,6 +169,7 @@ public:
   }
 
   const std::array<uint8_t, kMaxFrameBytes> &data() const { return data_; }
+  std::array<uint8_t, kMaxFrameBytes> &mutableData() { return data_; }
   bool operator==(const Canvas &other) const {
     return width_ == other.width_ && height_ == other.height_ &&
            data_ == other.data_;

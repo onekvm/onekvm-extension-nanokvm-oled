@@ -1,3 +1,4 @@
+#include "../src/assets.hpp"
 #include "../src/config.hpp"
 #include "../src/json.hpp"
 #include "../src/renderer.hpp"
@@ -53,8 +54,11 @@ int main() {
   ::unlink(machinePath.c_str());
   ::unlink(hardwarePath.c_str());
 
-  assert(chineseFont.load("web/oled/font-cjk-12.js", error));
   std::array<uint16_t, 12> chineseRows{};
+  ChineseFont lazyFont;
+  lazyFont.configure("web/oled/font-cjk-12.js");
+  assert(lazyFont.glyph(0x4e2d, chineseRows) && chineseRows[0] == 0x60);
+  assert(chineseFont.load("web/oled/font-cjk-12.js", error));
   assert(chineseFont.glyph(0x4e2d, chineseRows) && chineseRows[0] == 0x60);
   assert(textPixelWidth("A中B", 1) == 22 && textPixelHeight("A中B", 1) == 12);
   assert(textPixelWidth("N+1", 1, 3) == 11 &&
@@ -111,6 +115,19 @@ int main() {
          config.layout.elements[0].scale == 2 &&
          config.layout.elements[0].fontWidth == 3);
   ::unlink(path.c_str());
+
+  const std::string assetReferencePath = "/tmp/onekvm-oled-asset-reference-test.json";
+  {
+    std::ofstream output(assetReferencePath);
+    output << R"({"layout_json":"{\"version\":1,\"elements\":[{\"id\":\"movie\",\"type\":\"animation\",\"asset\":\"clip.oan\"}]}"})";
+  }
+  bool referenced = false;
+  error.clear();
+  assert(configReferencesAsset(assetReferencePath, "clip.oan", referenced, error));
+  assert(referenced);
+  assert(configReferencesAsset(assetReferencePath, "unused.oan", referenced, error));
+  assert(!referenced);
+  ::unlink(assetReferencePath.c_str());
 
   {
     std::ofstream output(path);

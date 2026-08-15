@@ -25,7 +25,17 @@ inline uint32_t little32(const char *bytes) {
 
 class ChineseFont {
 public:
+  void configure(std::string path) {
+    if (path == path_)
+      return;
+    path_ = std::move(path);
+    data_.clear();
+    count_ = 0;
+    attempted_ = false;
+  }
+
   bool load(const std::string &path, std::string &error) {
+    attempted_ = true;
     std::string loaded;
     if (!readFile(path, loaded, error, 1U << 20))
       return false;
@@ -64,7 +74,14 @@ public:
     return true;
   }
 
-  bool glyph(uint32_t codepoint, std::array<uint16_t, 12> &rows) const {
+  bool glyph(uint32_t codepoint, std::array<uint16_t, 12> &rows) {
+    if (data_.empty()) {
+      if (attempted_ || path_.empty())
+        return false;
+      std::string ignored;
+      if (!load(path_, ignored))
+        return false;
+    }
     uint32_t low = 0;
     uint32_t high = count_;
     while (low < high) {
@@ -129,7 +146,9 @@ private:
   }
 
   std::string data_;
+  std::string path_;
   uint32_t count_ = 0;
+  bool attempted_ = false;
 };
 
 inline ChineseFont chineseFont;

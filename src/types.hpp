@@ -76,6 +76,7 @@ struct Element {
   std::string mode;
   std::string content;
   std::string pixels;
+  std::string asset;
 };
 
 struct Layout {

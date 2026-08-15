@@ -36,54 +36,18 @@
         <div class="canvas-workspace">
           <div class="canvas-column">
             <div class="canvas-stage">
-              <div id="floating-toolbar" class="floating-toolbar hidden" role="toolbar" aria-label="Selected layer tools" data-i18n-aria-label="selectedLayerTools">
+              <div id="floating-toolbar" class="floating-toolbar empty" role="toolbar" aria-label="Selected layer tools" data-i18n-aria-label="selectedLayerTools">
+                <div id="layer-toolbar-host" class="layer-toolbar-host"></div>
+                <div class="legacy-toolbar-controls hidden" aria-hidden="true">
                 <span id="toolbar-kind" class="toolbar-kind"></span>
                 <label id="toolbar-name-control" class="toolbar-control toolbar-name-control">
                   <span class="sr-only" data-i18n="layerName">Layer name</span>
                   <input id="toolbar-name" maxlength="64" data-i18n-title="layerName" title="Layer name">
                 </label>
-                <label id="toolbar-content-control" class="toolbar-control toolbar-content-control hidden">
-                  <span class="sr-only" data-i18n="content">Content</span>
-                  <input id="toolbar-content" maxlength="128" data-i18n-title="content" title="Content">
-                </label>
                 <div id="toolbar-coordinates" class="toolbar-coordinates">
                   <label><span>X</span><input id="toolbar-x" type="number" min="0" max="63" step="1" aria-label="X"></label>
                   <label><span>Y</span><input id="toolbar-y" type="number" min="0" max="63" step="1" aria-label="Y"></label>
                 </div>
-                <label id="toolbar-scale-control" class="toolbar-control toolbar-compact hidden">
-                  <span class="sr-only" data-i18n="scale">Scale</span>
-                  <select id="toolbar-scale" data-i18n-title="scale" title="Scale"><option value="1">1×</option><option value="2">2×</option></select>
-                </label>
-                <label id="toolbar-font-width-control" class="toolbar-control toolbar-font-width-control hidden">
-                  <span class="sr-only" data-i18n="fontWidth">Font width</span>
-                  <select id="toolbar-font-width" data-i18n-title="fontWidth" title="Font width">
-                    <option value="3">3×5</option>
-                    <option value="4">4×5</option>
-                    <option value="5">5×5</option>
-                  </select>
-                </label>
-                <label id="toolbar-align-control" class="toolbar-control toolbar-compact hidden">
-                  <span class="sr-only" data-i18n="alignment">Alignment</span>
-                  <select id="toolbar-align" data-i18n-title="alignment" title="Alignment">
-                    <option value="left" data-i18n="alignLeft">Left</option>
-                    <option value="center" data-i18n="alignCenter">Center</option>
-                    <option value="right" data-i18n="alignRight">Right</option>
-                  </select>
-                </label>
-                <label id="toolbar-filled-control" class="toolbar-toggle hidden" data-i18n-title="filled" title="Filled">
-                  <input id="toolbar-filled" type="checkbox"><span data-i18n="filled">Filled</span>
-                </label>
-                <label id="toolbar-mode-control" class="toolbar-control toolbar-mode-control hidden">
-                  <span class="sr-only" data-i18n="graphicMode">Graphic mode</span>
-                  <select id="toolbar-mode" data-i18n-title="graphicMode" title="Graphic mode">
-                    <option value="custom" data-i18n="customGraphic">Custom pixels</option>
-                    <option value="eth" data-i18n="ethStatus">ETH status</option>
-                    <option value="hdmi" data-i18n="hdmiStatus">HDMI status</option>
-                    <option value="hid" data-i18n="hidStatus">HID status</option>
-                    <option value="wifi" data-i18n="wifiStatus">Wi-Fi status</option>
-                    <option value="live" data-i18n="liveStatus">ON LIVE</option>
-                  </select>
-                </label>
                 <div class="toolbar-layout-actions">
                   <button id="center-horizontal" type="button" class="icon-button" data-i18n-title="centerHorizontal" title="Center horizontally">↔</button>
                   <button id="center-vertical" type="button" class="icon-button" data-i18n-title="centerVertical" title="Center vertically">↕</button>
@@ -97,6 +61,7 @@
                   <button id="move-up" type="button" class="icon-button" data-i18n-title="moveUp" title="Move forward">↑</button>
                   <button id="delete-element" type="button" class="danger icon-button" data-i18n-title="delete" title="Delete">×</button>
                 </div>
+                </div>
               </div>
               <div id="oled-shell" class="oled-shell" data-rotation="0">
                 <canvas id="preview" width="256" height="128" tabindex="0" aria-label="OLED canvas preview" data-i18n-aria-label="canvasPreview"></canvas>
@@ -105,6 +70,49 @@
 
             <section id="toolbar-details" class="toolbar-details hidden">
               <div id="inspector-fields" class="inspector-fields">
+                <div id="element-type-options" class="type-properties element-type-options hidden">
+                  <label id="element-content-control" class="field hidden">
+                    <span data-i18n="content">Content</span>
+                    <input id="element-content" maxlength="128">
+                  </label>
+                  <div class="property-grid">
+                    <label id="element-scale-control" class="field hidden">
+                      <span data-i18n="scale">Scale</span>
+                      <select id="element-scale"><option value="1">1×</option><option value="2">2×</option></select>
+                    </label>
+                    <label id="element-font-width-control" class="field hidden">
+                      <span data-i18n="fontWidth">Font width</span>
+                      <select id="element-font-width">
+                        <option value="3">3×5</option>
+                        <option value="4">4×5</option>
+                        <option value="5">5×5</option>
+                      </select>
+                    </label>
+                    <label id="element-align-control" class="field hidden">
+                      <span data-i18n="alignment">Alignment</span>
+                      <select id="element-align">
+                        <option value="left" data-i18n="alignLeft">Left</option>
+                        <option value="center" data-i18n="alignCenter">Center</option>
+                        <option value="right" data-i18n="alignRight">Right</option>
+                      </select>
+                    </label>
+                    <label id="element-graphic-mode-control" class="field hidden">
+                      <span data-i18n="graphicMode">Graphic mode</span>
+                      <select id="element-graphic-mode">
+                        <option value="custom" data-i18n="customGraphic">Custom pixels</option>
+                        <option value="eth" data-i18n="ethStatus">ETH status</option>
+                        <option value="hdmi" data-i18n="hdmiStatus">HDMI status</option>
+                        <option value="hid" data-i18n="hidStatus">HID status</option>
+                        <option value="wifi" data-i18n="wifiStatus">Wi-Fi status</option>
+                        <option value="live" data-i18n="liveStatus">ON LIVE</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label id="element-filled-control" class="check-row hidden">
+                    <input id="element-filled" type="checkbox"><span data-i18n="filled">Filled</span>
+                  </label>
+                </div>
+
                 <div id="text-properties" class="type-properties">
                   <label class="field"><span data-i18n="textAreaWidth">Text area width</span><input id="element-text-width" type="number" min="1" max="64" step="1"></label>
                   <label class="check-row"><input id="element-full-width" type="checkbox"><span data-i18n="fullWidth">Full width</span></label>
@@ -157,6 +165,7 @@
                     <div class="bitmap-head">
                       <span data-i18n="pixelEditor">Pixel editor</span>
                       <div class="bitmap-actions">
+                        <button id="bitmap-import-open" type="button" data-i18n="importImage">Import image</button>
                         <button id="bitmap-clear" type="button" data-i18n="clearPixels">Clear</button>
                         <button id="bitmap-fill" type="button" data-i18n="fillPixels">Fill</button>
                         <button id="bitmap-invert" type="button" data-i18n="invertPixels">Invert</button>
@@ -164,6 +173,44 @@
                     </div>
                     <canvas id="bitmap-editor" width="192" height="96" tabindex="0" aria-label="Custom pixel graphic editor" data-i18n-aria-label="customPixelEditor"></canvas>
                     <p class="field-hint" data-i18n="pixelHint">Click or drag to draw; start on a lit pixel to erase.</p>
+                    <input id="bitmap-import-file" class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp">
+                    <section id="bitmap-import-panel" class="bitmap-import-panel hidden">
+                      <div class="bitmap-import-previews">
+                        <div class="bitmap-import-preview">
+                          <strong data-i18n="inputPreview">Input preview</strong>
+                          <canvas id="bitmap-import-source" width="320" height="180" tabindex="0" aria-label="Image crop selection" data-i18n-aria-label="cropSelection"></canvas>
+                          <p class="field-hint" data-i18n="cropHint">Drag on the image to select the source region.</p>
+                        </div>
+                        <div class="bitmap-import-preview">
+                          <div class="bitmap-import-preview-head"><strong data-i18n="outputPreview">Output preview</strong><span id="bitmap-import-output-size"></span></div>
+                          <canvas id="bitmap-import-output" width="192" height="96" aria-label="Monochrome OLED output preview" data-i18n-aria-label="outputPreview"></canvas>
+                        </div>
+                      </div>
+                      <div class="bitmap-import-options">
+                        <label class="check-row"><input id="bitmap-import-fixed-crop" type="checkbox"><span data-i18n="fixedCropSize">Fixed crop size</span></label>
+                        <div class="coordinate-grid bitmap-import-crop-size">
+                          <label><span data-i18n="cropWidth">Crop width</span><input id="bitmap-import-crop-width" type="number" min="1" step="1" disabled></label>
+                          <label><span data-i18n="cropHeight">Crop height</span><input id="bitmap-import-crop-height" type="number" min="1" step="1" disabled></label>
+                        </div>
+                      </div>
+                      <div class="coordinate-grid bitmap-import-size">
+                        <label><span data-i18n="outputWidth">Output width</span><input id="bitmap-import-width" type="number" min="1" max="128" step="1"></label>
+                        <label><span data-i18n="outputHeight">Output height</span><input id="bitmap-import-height" type="number" min="1" max="64" step="1"></label>
+                      </div>
+                      <label class="check-row"><input id="bitmap-import-trim-blank" type="checkbox"><span data-i18n="trimBlank">Crop blank edges from output</span></label>
+                      <div class="bitmap-import-actions">
+                        <button id="bitmap-import-cancel" type="button" data-i18n="cancel">Cancel</button>
+                        <button id="bitmap-import-apply" type="button" data-i18n="applyImage">Apply image</button>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+
+                <div id="animation-properties" class="type-properties hidden">
+                  <label class="field"><span data-i18n="animationAsset">Animation asset</span><select id="element-animation-asset"><option value="" data-i18n="selectAnimationAsset">Select an uploaded animation</option></select></label>
+                  <div class="coordinate-grid">
+                    <label><span data-i18n="width">Width</span><input id="element-animation-width" type="number" min="1" max="128" step="1"></label>
+                    <label><span data-i18n="height">Height</span><input id="element-animation-height" type="number" min="1" max="64" step="1"></label>
                   </div>
                 </div>
               </div>
@@ -178,11 +225,29 @@
               </div>
               <div id="add-layer-menu-host" class="add-layer-menu-host"></div>
             </header>
-            <div id="elements-list" class="elements-list" role="listbox" aria-multiselectable="true" aria-label="OLED layers" data-i18n-aria-label="canvasLayers"></div>
+            <div id="elements-list-host"></div>
           </aside>
         </div>
       </section>
 
+      <!-- Media library is rendered by MediaLibrary.vue. -->
+        <!-- legacy media markup removed -->
+        <!-- legacy converter removed -->
+          <!-- legacy converter fields removed -->
+          <!-- legacy media markup follows in this disabled block
+            <div class="media-resolution-row"><label><span data-i18n="mediaResolution">OLED resolution</span><select id="media-resolution"><option value="128x64">128 × 64 (Cube)</option><option value="64x32">64 × 32 (PCIe)</option><option value="custom" data-i18n="mediaCustomResolution">Custom</option></select></label><div id="media-custom-resolution" class="media-custom-resolution hidden"><label><span data-i18n="mediaCustomWidth">Width</span><input id="media-width" type="number" min="8" max="256" step="1" value="128"></label><button id="media-ratio-lock" type="button" class="ratio-lock active" aria-pressed="true" data-i18n-title="ratioLocked" title="Aspect ratio locked">🔒</button><label><span data-i18n="mediaCustomHeight">Height</span><input id="media-height" type="number" min="8" max="256" step="8" value="64"></label></div></div>
+            <details class="media-advanced"><summary data-i18n="mediaAdvanced">Advanced options</summary><div class="media-advanced-fields"><label><span data-i18n="mediaFps">Frame rate</span><select id="media-fps"><option value="30">30 FPS</option><option value="20">20 FPS</option><option value="15">15 FPS</option></select></label><label><span data-i18n="mediaFit">Fit</span><select id="media-fit"><option value="contain" data-i18n="fitContain">Letterbox</option><option value="cover" data-i18n="fitCover">Crop to fill</option></select></label></div></details>
+            <div class="media-convert-row"><button id="media-convert" type="button" class="primary" disabled data-i18n="convertVideo">Convert preview</button></div>
+          </div>
+          <div id="media-upload-actions" class="media-upload-actions hidden"><span data-i18n="previewBeforeUpload">Preview is ready on the OLED screen below.</span><div><button id="media-upload" type="button" disabled data-i18n="uploadAsset">Upload to device</button><button id="media-cancel" type="button" disabled data-i18n="reuploadAsset">Re-upload</button></div></div>
+        </div>
+        <div id="media-pending-preview" class="media-pending-preview hidden" aria-live="polite"></div>
+        <div class="media-status-row"><progress id="media-progress" class="media-progress hidden" min="0" max="1" value="0"></progress><p id="media-status" class="field-hint" aria-live="polite"></p></div>
+        <div class="media-library-toolbar"><strong data-i18n="libraryTitle">Saved animations</strong><label class="media-search"><span class="sr-only" data-i18n="searchAssets">Search assets</span><input id="media-search" type="search" placeholder="Search assets" data-i18n-placeholder="searchAssets"></label><button id="media-refresh" type="button" class="quiet-button" data-i18n="refreshAssets">Refresh</button></div>
+        <div id="media-library" class="media-library"></div><video id="media-decoder" class="hidden" muted playsinline></video><canvas id="media-frame" class="hidden"></canvas>
+      </section>
+
+      -->
       <section class="options-grid">
         <div class="card option">
           <label for="sleep" data-i18n="sleep">Turn off after no visible changes</label>

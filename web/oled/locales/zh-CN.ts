@@ -1,9 +1,11 @@
 import type { Messages } from './en'
 
 const messages = {
-  title: 'NanoKVM OLED 画布',
+  title: 'NanoKVM OLED 画布', canvasTab: '画布', mediaTab: '素材库', animation: '动图', addAnimation: '动图', animationAsset: '动图素材', selectAnimationAsset: '选择已上传的动图',
   previewHint: '可拖动元素 · Shift/Ctrl 点击多选 · 预览跟随观看方向',
   selectedLayerTools: '所选图层工具',
+  toolbarEmptyHint: '暂无图层，请先添加图层。',
+  toolbarSelectHint: '点击图层元素以显示操作选项。',
   canvasPreview: 'OLED 画布预览',
   canvasLayers: 'OLED 图层',
   customPixelEditor: '自定义像素图形编辑器',
@@ -77,6 +79,20 @@ const messages = {
   fillPixels: '全部点亮',
   invertPixels: '反转',
   pixelHint: '单击或拖动绘制；从已点亮的像素开始可擦除。',
+  importImage: '从图片导入',
+  inputPreview: '输入预览',
+  cropSelection: '图片框选区域',
+  cropHint: '拖动以框选输入区域；指定固定尺寸后，拖动选框可调整位置。',
+  fixedCropSize: '固定框选尺寸',
+  cropWidth: '框选宽度',
+  cropHeight: '框选高度',
+  outputPreview: '输出预览',
+  outputWidth: '输出宽度',
+  outputHeight: '输出高度',
+  trimBlank: '裁剪输出空白边缘',
+  applyImage: '应用图片',
+  cancel: '取消',
+  confirmDelete: '确认删除',
   connected: '已连接',
   disconnected: '未连接',
   unavailable: '不可用',
@@ -90,6 +106,7 @@ const messages = {
   invalidImport: '所选文件不是有效的 OneKVM OLED 图层文件。',
   importTooMany: '图层文件包含超过 32 个图层。',
   imported: '图层已导入',
+  mediaKicker: '设备素材库', uploadCardTitle: '上传与转换', libraryTitle: '已保存动图', searchAssets: '搜索素材', refreshAssets: '刷新', savedAsset: '个素材', previewAsset: '网页预览', closePreview: '关闭预览', playAsset: '在设备播放', playingAsset: '正在播放', downloadAsset: '下载', assetDownloaded: '动图已下载', uploadAssetFile: 'OLED 素材文件', uploadAssetFileHint: '导入已转换的 .oan 文件，预览后再上传到设备。', chooseAssetFile: '选择 .oan 文件', invalidAssetFile: '所选文件不是有效的 OLED 动图素材。', renameAsset: '重命名', assetName: '素材名称', confirmRename: '确认重命名', assetRenamed: '动图已重命名', invalidAssetName: '名称只能包含字母、数字、点、下划线和连字符。', assetNameExists: '已存在同名素材。', assetInUse: '画布正在使用此动图，请先从画布移除并保存，然后再重命名或删除。', deleteAsset: '删除', deleteAssetConfirm: '确定从设备删除此动图吗？', assetDeleted: '动图已删除', ratioLocked: '已锁定宽高比', ratioUnlocked: '已解锁宽高比', mediaTitle: 'OLED 动图素材库', mediaHint: '先在浏览器本地转换并预览，再决定是否上传到设备。', chooseVideo: '选择视频', dropVideo: '或将视频拖到这里', noVideo: '尚未选择视频', mediaResolution: 'OLED 分辨率', mediaCustomResolution: '自定义', mediaCustomWidth: '宽度', mediaCustomHeight: '高度', mediaAdvanced: '高级选项', mediaFps: '帧率', mediaFit: '适配方式', fitContain: '保持比例（留黑边）', fitCover: '保持比例（裁剪填充）', convertVideo: '转换并预览', cancelConversion: '取消转换', conversionCancelled: '已取消转换', uploadAsset: '上传到设备', reuploadAsset: '重新上传', previewBeforeUpload: 'OLED 屏幕预览已就绪。', convertingVideo: '正在转换 {percent}% · {frames} 帧 · 预计还需 {eta}', convertingPercent: '进度 {percent}%', convertingFrames: '{frames} / {total} 帧', convertingEta: '预计还需 {eta}', previewReady: '预览就绪 · {frames} 帧 · {size}', assetReady: '已上传 · {frames} 帧 · {size}', noAssets: '还没有动图素材。', assetLibraryError: '无法打开设备素材库。', assetTooLarge: '转换后的动图超过 32 MB 素材上限。',
 } as const satisfies Messages
 
 export default {

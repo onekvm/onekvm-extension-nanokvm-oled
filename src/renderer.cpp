@@ -139,7 +139,7 @@ Canvas render(const Config &config, const Status &status,
                     config.rotation, !element.filled, regionX, regionWidth,
                     regionY, regionHeight);
       }
-    } else if (element.mode == "custom")
+    } else if (element.type == "animation" || element.mode == "custom")
       canvas.graphic(element.x, element.y, element.width, element.height,
                      element.pixels, config.rotation);
     else if (element.mode == "live") {

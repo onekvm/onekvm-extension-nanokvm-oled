@@ -28,13 +28,268 @@ export function mountOLEDDesigner(root, host) {
   let selectedIDs = new Set()
   let drag = null
   let bitmapDrag = null
+  let bitmapImport = null
+  let bitmapImportObjectURL = ''
   let layerDragID = null
   let cjkFont = null
   let liveIndicatorOn = true
   let copiedElements = []
+  let mediaInput = null
+  let mediaObjectURL = ''
+  let mediaPreviewURLs = []
+  let mediaTimers = []
+  let pendingMedia = null
+  let mediaAspectRatio = 2
+  let mediaRatioLocked = true
+  let mediaAssets = []
+  let mediaBusy = false
+  let externalMediaTimer = null
+  let externalMediaActive = false
+  let animationAssets = []
+  const animationData = new Map()
+  let animationTimer = null
+  const animationEpoch = performance.now()
 
   const element = (id) => root.querySelector(`#${CSS.escape(id)}`)
   const preview = element('preview')
+
+  function mediaBytes(value) {
+    if (value < 1024) return `${value} B`
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  function mediaDuration(value) {
+    const seconds = Math.max(0, Math.round(Number(value) || 0))
+    const minutes = Math.floor(seconds / 60)
+    return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+  }
+
+  function setMediaBusy(busy) {
+    mediaBusy = busy
+    const locked = busy || Boolean(pendingMedia)
+    element('media-card')?.setAttribute('aria-busy', String(busy))
+    for (const id of ['media-input', 'media-resolution', 'media-width', 'media-height', 'media-ratio-lock', 'media-fps', 'media-fit']) {
+      const control = element(id)
+      if (control) control.disabled = locked
+    }
+    const convert = element('media-convert'); if (convert) convert.disabled = locked || !mediaInput?.files?.length
+    const upload = element('media-upload'); if (upload) upload.disabled = busy || !pendingMedia
+    const cancel = element('media-cancel'); if (cancel) cancel.disabled = busy || !pendingMedia
+    const actions = element('media-upload-actions'); if (actions) actions.classList.toggle('hidden', !pendingMedia)
+    const refresh = element('media-refresh'); if (refresh) refresh.disabled = busy
+  }
+
+  function stopMediaPreviews() {
+    mediaPreviewURLs.forEach((url) => URL.revokeObjectURL(url))
+    mediaTimers.forEach((timer) => clearInterval(timer))
+    mediaPreviewURLs = []
+    mediaTimers = []
+  }
+
+  function drawOLEDFrames(canvas, asset, bytes, full) {
+    const context = canvas.getContext('2d')
+    if (!context) return
+    const frameBytes = asset.width * asset.height / 8
+    const required = (full ? 14 : 0) + (full ? asset.frames : 1) * frameBytes
+    if (bytes.length < required) return
+    let frame = 0
+    const image = context.createImageData(asset.width, asset.height)
+    const draw = () => {
+      const offset = full ? 14 + frame * frameBytes : 0
+      for (let y = 0; y < asset.height; y += 1) for (let x = 0; x < asset.width; x += 1) {
+        const on = (bytes[offset + (y >> 3) * asset.width + x] & (1 << (y & 7))) !== 0
+        const pixel = (y * asset.width + x) * 4
+        image.data[pixel] = on ? 228 : 0
+        image.data[pixel + 1] = on ? 255 : 5
+        image.data[pixel + 2] = on ? 238 : 7
+        image.data[pixel + 3] = 255
+      }
+      context.putImageData(image, 0, 0)
+      if (full) frame = (frame + 1) % asset.frames
+    }
+    draw()
+    if (full && asset.frames > 1) mediaTimers.push(setInterval(draw, Math.max(1, Math.round(1000 / asset.fps))))
+  }
+
+  async function renderMediaCards(assets, library, showEmpty) {
+    if (!library) return
+    library.replaceChildren()
+    if (!assets.length) {
+      if (showEmpty) { const empty = document.createElement('p'); empty.className = 'media-empty'; empty.textContent = text.noAssets; library.append(empty) }
+      return
+    }
+    for (const asset of assets) {
+      const card = document.createElement('article'); card.className = `media-asset${asset.id === 'pending' ? ' pending' : ''}`
+      const canvas = document.createElement('canvas'); canvas.width = asset.width; canvas.height = asset.height; canvas.setAttribute('aria-label', asset.name)
+      const glass = document.createElement('div'); glass.className = 'asset-glass'; glass.style.aspectRatio = `${asset.width} / ${asset.height}`; glass.append(canvas)
+      const brand = document.createElement('span'); brand.className = 'asset-brand'; brand.textContent = 'NANOKVM · OLED'
+      const led = document.createElement('i'); led.className = 'asset-led'; led.setAttribute('aria-hidden', 'true')
+      const screen = document.createElement('div'); screen.className = 'asset-screen'; screen.append(brand, glass, led)
+      const fullBytes = asset.data instanceof Uint8Array ? asset.data : null
+      const previewBytes = fullBytes || Uint8Array.from(atob(asset.preview_base64 || ''), (char) => char.charCodeAt(0))
+      drawOLEDFrames(canvas, asset, previewBytes, Boolean(fullBytes))
+      const title = document.createElement('strong'); title.textContent = asset.name
+      const detail = document.createElement('small'); detail.textContent = `${asset.width}×${asset.height} · ${asset.fps} FPS · ${mediaDuration(asset.duration_seconds ?? asset.frames / asset.fps)} · ${mediaBytes(asset.size)}`
+      const state = document.createElement('span'); state.className = 'asset-state'; state.textContent = asset.id === 'pending' ? text.previewReady.split('·')[0].trim() : text.savedAsset
+      const actions = document.createElement('div'); actions.className = 'asset-actions'; if (asset.id !== 'pending') { const play = document.createElement('button'); play.type = 'button'; play.textContent = text.previewAsset; play.addEventListener('click', async () => { play.disabled = true; try { const response = await globalThis['f' + 'etch'](mediaRoute(`/${encodeURIComponent(asset.id)}`), { credentials: 'include' }); if (!response.ok) throw new Error(`asset preview failed (${response.status})`); const bytes = new Uint8Array(await response.arrayBuffer()); stopMediaPreviews(); drawOLEDFrames(canvas, asset, bytes, true); card.classList.add('playing'); play.textContent = text.playingAsset } catch (_) { setError(text.assetLibraryError) } finally { play.disabled = false } }); actions.append(play) }
+      card.append(screen, title, detail, state, actions); library.append(card)
+    }
+  }
+
+  async function renderMediaAssets(assets) {
+    stopMediaPreviews()
+    const pending = assets.filter((asset) => asset.id === 'pending')
+    const saved = assets.filter((asset) => asset.id !== 'pending')
+    const pendingHost = element('media-pending-preview')
+    if (pendingHost) pendingHost.classList.toggle('hidden', pending.length === 0)
+    await renderMediaCards(pending, pendingHost, false)
+    await renderMediaCards(saved, element('media-library'), true)
+  }
+
+  function mediaRoute(path = '') {
+    const extension = host.extension.value
+    return `${window.location.origin}/api/plugins/${encodeURIComponent(extension.id)}/assets${path}`
+  }
+
+  function animationFramePixels(data, frame, width, height) {
+    const frameBytes = width * height / 8
+    const offset = 14 + frame * frameBytes
+    let pixels = normalizePixels('', width, height)
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      if ((data[offset + (y >> 3) * width + x] & (1 << (y & 7))) === 0) continue
+      const index = y * width + x
+      const nibble = Math.floor(index / 4)
+      const value = Number.parseInt(pixels[nibble], 16) | (1 << (3 - index % 4))
+      pixels = `${pixels.slice(0, nibble)}${value.toString(16).toUpperCase()}${pixels.slice(nibble + 1)}`
+    }
+    return pixels
+  }
+
+  async function loadAnimationData(name) {
+    if (!name || animationData.has(name)) return animationData.get(name)
+    try {
+      const response = await globalThis['f' + 'etch'](mediaRoute(`/${encodeURIComponent(name)}`), { credentials: 'include' })
+      if (!response.ok) return null
+      const data = new Uint8Array(await response.arrayBuffer())
+      const view = new DataView(data.buffer)
+      if (data.length < 14 || view.getUint8(0) !== 0x4f || view.getUint8(1) !== 0x41 || view.getUint8(2) !== 0x4e || view.getUint8(3) !== 0x31) return null
+      const value = { data, width: view.getUint16(4, true), height: view.getUint16(6, true), fps: view.getUint16(8, true), frames: view.getUint32(10, true) }
+      animationData.set(name, value)
+      return value
+    } catch (_) { return null }
+  }
+
+  function updateAnimationFrames() {
+    let changed = false
+    const elapsed = Math.max(0, performance.now() - animationEpoch)
+    for (const item of layout.elements) {
+      if (item.type !== 'animation' || !item.asset) continue
+      const value = animationData.get(item.asset)
+      if (!value || !value.frames || !value.fps) continue
+      const frame = Math.floor(elapsed * value.fps / 1000) % value.frames
+      const pixels = animationFramePixels(value.data, frame, value.width, value.height)
+      if (item.pixels !== pixels || item.width !== value.width || item.height !== value.height) {
+        item.width = value.width; item.height = value.height; item.pixels = pixels; changed = true
+      }
+    }
+    if (changed) render()
+  }
+
+  function ensureAnimationTimer() {
+    if (animationTimer !== null) return
+    animationTimer = setInterval(updateAnimationFrames, 33)
+  }
+
+  async function refreshAnimationAssets() {
+    const select = element('element-animation-asset')
+    if (!select) return
+    try {
+      const response = await globalThis['f' + 'etch'](mediaRoute('/'), { credentials: 'include' })
+      if (!response.ok) return
+      animationAssets = await response.json()
+      const current = selectedElement()?.type === 'animation'
+        ? selectedElement().asset
+        : select.value
+      select.replaceChildren(new Option(text.selectAnimationAsset, ''))
+      animationAssets.forEach((asset) => select.append(new Option(asset.name, asset.id)))
+      if (animationAssets.some((asset) => asset.id === current)) select.value = current
+    } catch (_) {}
+  }
+
+  async function refreshMediaAssets() {
+    try { const response = await globalThis['f' + 'etch'](mediaRoute('/'), { credentials: 'include' }); if (!response.ok) throw new Error('asset list failed'); mediaAssets = await response.json(); const query = (element('media-search')?.value || '').trim().toLowerCase(); await renderMediaAssets(query ? mediaAssets.filter((asset) => asset.name.toLowerCase().includes(query)) : mediaAssets); const summary = element('media-summary'); if (summary) summary.textContent = `${mediaAssets.length} ${text.savedAsset}` } catch (_) { setError(text.assetLibraryError) }
+  }
+
+  function mediaSeek(video, time) {
+    return new Promise((resolve, reject) => {
+      if (Math.abs(video.currentTime - time) < 0.0005) { resolve(); return }
+      const done = () => { video.removeEventListener('seeked', done); video.removeEventListener('error', fail); resolve() }
+      const fail = () => { video.removeEventListener('seeked', done); video.removeEventListener('error', fail); reject(video.error || new Error('Video seek failed')) }
+      video.addEventListener('seeked', done, { once: true }); video.addEventListener('error', fail, { once: true }); video.currentTime = time
+    })
+  }
+
+  async function convertMedia() {
+    const file = mediaInput?.files?.[0]; if (!file || mediaBusy) return; setMediaBusy(true)
+    const decoder = element('media-decoder'); const frameCanvas = element('media-frame'); const context = frameCanvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('Canvas is unavailable')
+    const resolution = element('media-resolution').value; const dimensions = resolution === 'custom' ? [Number(element('media-width').value), Number(element('media-height').value)] : resolution.split('x').map(Number); let [width, height] = dimensions; if (!Number.isInteger(width) || !Number.isInteger(height) || width < 8 || width > 256 || height < 8 || height > 256 || height % 8) throw new Error('Invalid OLED resolution')
+    const fps = Number(element('media-fps').value) || 30; const fit = element('media-fit').value
+    const progress = element('media-progress'); const statusNode = element('media-status'); const button = element('media-convert')
+    if (mediaObjectURL) URL.revokeObjectURL(mediaObjectURL); mediaObjectURL = URL.createObjectURL(file); decoder.src = mediaObjectURL; await new Promise((resolve, reject) => { decoder.onloadedmetadata = resolve; decoder.onerror = () => reject(decoder.error || new Error('Video cannot be decoded')) })
+    const duration = Number.isFinite(decoder.duration) ? decoder.duration : 0; if (!duration) throw new Error('Video has no duration'); mediaAspectRatio = decoder.videoWidth / decoder.videoHeight
+    if (resolution === 'custom' && mediaRatioLocked) { height = Math.max(8, Math.round((width / mediaAspectRatio) / 8) * 8); if (height > 256) throw new Error('Invalid OLED resolution'); element('media-height').value = String(height) }
+    const frameCount = Math.max(1, Math.floor(duration * fps)); const outputSize = 14 + frameCount * width * height / 8; if (outputSize > 32 * 1024 * 1024) throw new Error(text.assetTooLarge); frameCanvas.width = width; frameCanvas.height = height; progress.classList.remove('hidden'); progress.value = 0; button.disabled = true
+    const output = new Uint8Array(14 + frameCount * width * height / 8); const header = new DataView(output.buffer); header.setUint8(0, 0x4f); header.setUint8(1, 0x41); header.setUint8(2, 0x4e); header.setUint8(3, 0x31); header.setUint16(4, width, true); header.setUint16(6, height, true); header.setUint16(8, fps, true); header.setUint32(10, frameCount, true)
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      await mediaSeek(decoder, Math.min(duration - 0.001, frameIndex / fps)); context.fillStyle = '#000'; context.fillRect(0, 0, width, height)
+      const scale = fit === 'cover' ? Math.max(width / decoder.videoWidth, height / decoder.videoHeight) : Math.min(width / decoder.videoWidth, height / decoder.videoHeight)
+      const drawWidth = decoder.videoWidth * scale; const drawHeight = decoder.videoHeight * scale
+      context.drawImage(decoder, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight)
+      const pixels = context.getImageData(0, 0, width, height).data; const offset = 14 + frameIndex * width * height / 8
+      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) { const pixel = (y * width + x) * 4; if (pixels[pixel] * 0.2126 + pixels[pixel + 1] * 0.7152 + pixels[pixel + 2] * 0.0722 >= 128) output[offset + (y >> 3) * width + x] |= 1 << (y & 7) }
+      if (frameIndex % 3 === 0) { progress.value = (frameIndex + 1) / frameCount; statusNode.textContent = text.convertingVideo.replace('{percent}', String(Math.round(progress.value * 100))).replace('{frames}', String(frameIndex + 1)); await new Promise((resolve) => setTimeout(resolve, 0)) }
+    }
+    const name = `${(file.name.replace(/\.[^.]+$/, '') || 'animation').replace(/[^a-zA-Z0-9_.-]/g, '_')}-${width}x${height}-${fps}.oan`
+    pendingMedia = { name, output, width, height, fps, frames: frameCount }
+    statusNode.textContent = text.previewReady.replace('{frames}', String(frameCount)).replace('{size}', mediaBytes(output.byteLength)); progress.classList.add('hidden')
+    await renderMediaAssets([{ id: 'pending', name: name.replace(/\.oan$/, ''), width, height, fps, frames: frameCount, duration_seconds: frameCount / fps, size: output.byteLength, data: output }]); setMediaBusy(false)
+  }
+
+  async function uploadPendingMedia() {
+    if (!pendingMedia || mediaBusy) return; setMediaBusy(true)
+    const response = await globalThis['f' + 'etch'](mediaRoute(`/upload?name=${encodeURIComponent(pendingMedia.name)}`), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: pendingMedia.output })
+    if (!response.ok) { const detail = (await response.text()).trim(); throw new Error(`asset upload failed (${response.status})${detail ? `: ${detail}` : ''}`) }
+    element('media-status').textContent = text.assetReady.replace('{frames}', String(pendingMedia.frames)).replace('{size}', mediaBytes(pendingMedia.output.byteLength)); pendingMedia = null; mediaInput.value = ''; element('media-file-name').textContent = text.noVideo; setMediaBusy(false); await refreshMediaAssets()
+  }
+
+  function bindMedia() {
+    mediaInput = element('media-input'); const button = element('media-convert'); const resolution = element('media-resolution'); const custom = element('media-custom-resolution')
+    const dropzone = element('media-dropzone')
+    const selectMediaFile = (file) => {
+      if (!file || mediaBusy || pendingMedia || (!String(file.type || '').startsWith('video/') && !/\.(mp4|webm|mov)$/i.test(file.name || ''))) return
+      try { const transfer = new DataTransfer(); transfer.items.add(file); mediaInput.files = transfer.files } catch (_) {}
+      element('media-file-name').textContent = file.name || text.noVideo
+      setMediaBusy(false)
+    }
+    resolution?.addEventListener('change', () => custom?.classList.toggle('hidden', resolution.value !== 'custom'))
+    element('media-width')?.addEventListener('input', () => { if (resolution.value === 'custom' && mediaRatioLocked) element('media-height').value = String(Math.max(8, Math.round((Number(element('media-width').value) / mediaAspectRatio) / 8) * 8)) })
+    element('media-height')?.addEventListener('input', () => { if (resolution.value === 'custom' && mediaRatioLocked) element('media-width').value = String(Math.max(8, Math.round(Number(element('media-height').value) * mediaAspectRatio))) })
+    element('media-ratio-lock')?.addEventListener('click', () => { mediaRatioLocked = !mediaRatioLocked; const lock = element('media-ratio-lock'); lock.classList.toggle('active', mediaRatioLocked); lock.setAttribute('aria-pressed', String(mediaRatioLocked)); lock.textContent = mediaRatioLocked ? '🔒' : '🔓'; lock.title = mediaRatioLocked ? text.ratioLocked : text.ratioUnlocked })
+    mediaInput?.addEventListener('change', () => selectMediaFile(mediaInput.files?.[0]))
+    dropzone?.addEventListener('click', (event) => { if (event.target === dropzone && !mediaBusy && !pendingMedia) mediaInput?.click() })
+    dropzone?.addEventListener('keydown', (event) => { if ((event.key === 'Enter' || event.key === ' ') && !mediaBusy && !pendingMedia) { event.preventDefault(); mediaInput?.click() } })
+    dropzone?.addEventListener('dragover', (event) => { event.preventDefault(); if (!mediaBusy && !pendingMedia) dropzone.classList.add('drag-over') })
+    dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'))
+    dropzone?.addEventListener('drop', (event) => { event.preventDefault(); dropzone.classList.remove('drag-over'); if (!mediaBusy && !pendingMedia) selectMediaFile(event.dataTransfer?.files?.[0]) })
+    button?.addEventListener('click', async () => { try { await convertMedia() } catch (error) { if (mediaObjectURL) { URL.revokeObjectURL(mediaObjectURL); mediaObjectURL = '' } setMediaBusy(false); element('media-status').textContent = error instanceof Error ? error.message : String(error); element('media-progress').classList.add('hidden') } })
+    element('media-upload')?.addEventListener('click', async () => { try { await uploadPendingMedia() } catch (error) { setMediaBusy(false); element('media-status').textContent = error instanceof Error ? error.message : String(error) } })
+    element('media-cancel')?.addEventListener('click', () => { pendingMedia = null; element('media-status').textContent = ''; setMediaBusy(false); void refreshMediaAssets() })
+    element('media-refresh')?.addEventListener('click', () => { if (!mediaBusy) void refreshMediaAssets() })
+    element('media-search')?.addEventListener('input', () => { const query = element('media-search').value.trim().toLowerCase(); void renderMediaAssets(query ? mediaAssets.filter((asset) => asset.name.toLowerCase().includes(query)) : mediaAssets) })
+    void refreshMediaAssets()
+  }
 
   function translate() {
     root.setAttribute('lang', htmlLang(language))
@@ -52,6 +307,10 @@ export function mountOLEDDesigner(root, host) {
     root.querySelectorAll('[data-i18n-aria-label]').forEach((node) => {
       const value = text[node.dataset.i18nAriaLabel]
       if (value) node.setAttribute('aria-label', value)
+    })
+    root.querySelectorAll('[data-i18n-placeholder]').forEach((node) => {
+      const value = text[node.dataset.i18nPlaceholder]
+      if (value) node.setAttribute('placeholder', value)
     })
   }
 
@@ -113,6 +372,10 @@ export function mountOLEDDesigner(root, host) {
     selectedID = validIDs.has(selectedID) && selectedIDs.has(selectedID) ? selectedID : null
     if (!selectedID && selectedIDs.size) selectedID = [...selectedIDs].at(-1)
     clampAllElements()
+    if (layout.elements.some((item) => item.type === 'animation' && item.asset)) {
+      ensureAnimationTimer()
+      layout.elements.filter((item) => item.type === 'animation' && item.asset).forEach((item) => { void loadAnimationData(item.asset) })
+    }
     syncGlobalForm()
     syncEditor()
   }
@@ -237,7 +500,7 @@ export function mountOLEDDesigner(root, host) {
   }
 
   function normalizeElement(item) {
-    if (!item || !['text', 'line', 'rect', 'graphic'].includes(item.type) || typeof item.id !== 'string') return null
+    if (!item || !['text', 'line', 'rect', 'graphic', 'animation'].includes(item.type) || typeof item.id !== 'string') return null
     const normalized = {
       id: item.id.slice(0, 32), type: item.type,
       name: typeof item.name === 'string' ? [...item.name].slice(0, 64).join('') : '',
@@ -262,6 +525,13 @@ export function mountOLEDDesigner(root, host) {
       normalized.scale = item.scale === 2 ? 2 : 1
       normalized.font_width = [3, 4, 5].includes(item.font_width) ? item.font_width : 4
       normalized.align = textAlignments.includes(item.align) ? item.align : 'center'
+    } else if (item.type === 'animation') {
+      normalized.asset = typeof item.asset === 'string' ? item.asset.slice(0, 96) : ''
+      normalized.mode = 'custom'
+      normalized.content = 'custom'
+      normalized.width = clamp(integer(item.width, 16), 1, Math.max(screenWidth, screenHeight))
+      normalized.height = clamp(integer(item.height, 8), 1, Math.max(screenWidth, screenHeight))
+      normalized.pixels = normalizePixels(item.pixels, normalized.width, normalized.height)
     } else {
       normalized.mode = graphicModes.includes(item.mode) ? item.mode : 'custom'
       normalized.width = clamp(integer(item.width, 16), 1, Math.max(screenWidth, screenHeight))
@@ -374,8 +644,9 @@ export function mountOLEDDesigner(root, host) {
 
   function renderElementList() {
     const list = element('elements-list')
-    list.replaceChildren()
+    if (list) list.replaceChildren()
     ;[...layout.elements].reverse().forEach((item) => {
+      if (!list) return
       const row = document.createElement('div')
       const selected = selectedIDs.has(item.id)
       row.className = `element-row${selected ? ' selected' : ''}${item.hidden ? ' layer-hidden' : ''}`
@@ -462,6 +733,13 @@ export function mountOLEDDesigner(root, host) {
     element('element-count').textContent = `${layout.elements.length} / ${maxElements}`
     const full = layout.elements.length >= maxElements
     host.onLayerState?.({ count: layout.elements.length, max: maxElements, full, empty: layout.elements.length === 0 })
+    host.onLayersState?.(layout.elements.map((item) => {
+      const thumbnail = document.createElement('canvas')
+      thumbnail.width = 38
+      thumbnail.height = 24
+      renderLayerThumbnail(thumbnail, item)
+      return { id: item.id, name: layerDisplayName(item), type: item.type, x: item.x, y: item.y, hidden: item.hidden, thumbnail: thumbnail.toDataURL('image/png') }
+    }))
   }
 
   function layerDisplayName(item) {
@@ -516,6 +794,7 @@ export function mountOLEDDesigner(root, host) {
   function syncInspector() {
     const items = selectedElements()
     const item = items.length === 1 ? selectedElement() : null
+    if (bitmapImport && item?.id !== bitmapImport.targetID) closeBitmapImporter()
     element('toolbar-details').classList.toggle('hidden', !item)
     element('delete-element').disabled = items.length === 0
     element('copy-element').disabled = items.length === 0
@@ -529,10 +808,12 @@ export function mountOLEDDesigner(root, host) {
     element('distribute-vertical').disabled = items.length < 3
     syncFloatingToolbar(item, items.length)
     if (!item) return
+    syncTypeOptions(item)
     element('text-properties').classList.toggle('hidden', item.type !== 'text')
     element('line-properties').classList.toggle('hidden', item.type !== 'line')
     element('rect-properties').classList.toggle('hidden', item.type !== 'rect')
     element('graphic-properties').classList.toggle('hidden', item.type !== 'graphic')
+    element('animation-properties').classList.toggle('hidden', item.type !== 'animation')
     if (item.type === 'text') {
       element('element-full-width').checked = item.full_width
       element('element-text-width').value = String(textRegionWidth(item, logicalSize().width))
@@ -543,6 +824,10 @@ export function mountOLEDDesigner(root, host) {
     } else if (item.type === 'rect') {
       element('element-width').value = String(item.width)
       element('element-height').value = String(item.height)
+    } else if (item.type === 'animation') {
+      element('element-animation-asset').value = item.asset || ''
+      element('element-animation-width').value = String(item.width)
+      element('element-animation-height').value = String(item.height)
     } else {
       element('element-graphic-width').value = String(item.width)
       element('element-graphic-height').value = String(item.height)
@@ -563,43 +848,91 @@ export function mountOLEDDesigner(root, host) {
 
   function syncFloatingToolbar(item, selectedCount) {
     const toolbar = element('floating-toolbar')
-    toolbar.classList.toggle('hidden', selectedCount === 0)
-    if (selectedCount === 0) return
+    toolbar.classList.toggle('empty', selectedCount === 0)
+    if (selectedCount === 0) {
+      element('toolbar-kind').textContent = layout.elements.length === 0 ? text.toolbarEmptyHint : text.toolbarSelectHint
+      notifyToolbarState(null, 0)
+      return
+    }
     const multiple = selectedCount > 1
     element('toolbar-name-control').classList.toggle('hidden', multiple)
     element('toolbar-coordinates').classList.toggle('hidden', multiple)
-    element('toolbar-content-control').classList.toggle('hidden', multiple)
-    element('toolbar-scale-control').classList.toggle('hidden', multiple)
-    element('toolbar-font-width-control').classList.toggle('hidden', multiple)
-    element('toolbar-align-control').classList.toggle('hidden', multiple)
-    element('toolbar-filled-control').classList.toggle('hidden', multiple)
-    element('toolbar-mode-control').classList.toggle('hidden', multiple)
     if (multiple) {
       element('toolbar-kind').textContent = text.selectedCount.replace('{count}', String(selectedCount))
+      notifyToolbarState(null, selectedCount)
       return
     }
-    const editableText = item.type === 'text' || item.type === 'rect' || (item.type === 'graphic' && item.mode !== 'custom' && item.content === 'text')
-    const scalableText = editableText && !(item.type === 'graphic' && item.mode === 'live')
     element('toolbar-kind').textContent = text[item.type]
     element('toolbar-name').value = item.name || ''
     element('toolbar-name').placeholder = layerDisplayName(item)
     element('toolbar-x').value = String(item.x)
     element('toolbar-y').value = String(item.y)
     element('toolbar-x').disabled = item.type === 'text' && item.full_width
-    element('toolbar-content-control').classList.toggle('hidden', !editableText)
-    element('toolbar-scale-control').classList.toggle('hidden', !scalableText)
-    element('toolbar-font-width-control').classList.toggle('hidden', !editableText)
-    element('toolbar-align-control').classList.toggle('hidden', item.type !== 'text' && item.type !== 'rect')
-    element('toolbar-filled-control').classList.toggle('hidden', item.type !== 'rect')
-    element('toolbar-mode-control').classList.toggle('hidden', item.type !== 'graphic')
+    notifyToolbarState(item, selectedCount)
+  }
+
+  function notifyToolbarState(item, selectedCount) {
+    const index = item ? layout.elements.indexOf(item) : -1
+    const size = logicalSize()
+    host.onToolbarState?.({
+      layerCount: layout.elements.length,
+      selectedCount,
+      type: item?.type || '',
+      name: item?.name || '',
+      x: item?.x || 0,
+      y: item?.y || 0,
+      maxX: size.width - 1,
+      maxY: size.height - 1,
+      xDisabled: Boolean(item?.type === 'text' && item.full_width),
+      canDelete: selectedCount > 0,
+      canCopy: selectedCount > 0,
+      canPaste: layout.elements.length < maxElements,
+      canMoveDown: selectedCount === 1 && index > 0,
+      canMoveUp: selectedCount === 1 && index >= 0 && index < layout.elements.length - 1,
+      canCenter: selectedCount > 0,
+      canDistribute: selectedCount >= 3,
+    })
+  }
+
+  function updateToolbar(field, value) {
+    if (field === 'name') updateSelected('name', [...String(value)].slice(0, 64).join(''))
+    else if (field === 'x') updateSelected('x', clamp(integer(value, 0), 0, logicalSize().width - 1))
+    else if (field === 'y') updateSelected('y', clamp(integer(value, 0), 0, logicalSize().height - 1))
+  }
+
+  function runToolbarAction(action) {
+    if (action === 'center-horizontal') centerSelection('horizontal')
+    else if (action === 'center-vertical') centerSelection('vertical')
+    else if (action === 'distribute-horizontal') distributeSelection('horizontal')
+    else if (action === 'distribute-vertical') distributeSelection('vertical')
+    else if (action === 'copy') copySelected()
+    else if (action === 'paste') void pasteCopied()
+    else if (action === 'move-down') reorderSelected(-1)
+    else if (action === 'move-up') reorderSelected(1)
+    else if (action === 'delete') deleteSelected()
+  }
+
+  function syncTypeOptions(item) {
+    const editableText = item.type === 'text' || item.type === 'rect' || (item.type === 'graphic' && item.mode !== 'custom' && item.content === 'text')
+    const scalableText = editableText && !(item.type === 'graphic' && item.mode === 'live')
+    const alignedText = item.type === 'text' || item.type === 'rect'
+    const filledRect = item.type === 'rect'
+    const graphicMode = item.type === 'graphic'
+    element('element-type-options').classList.toggle('hidden', !editableText && !filledRect && !graphicMode)
+    element('element-content-control').classList.toggle('hidden', !editableText)
+    element('element-scale-control').classList.toggle('hidden', !scalableText)
+    element('element-font-width-control').classList.toggle('hidden', !editableText)
+    element('element-align-control').classList.toggle('hidden', !alignedText)
+    element('element-filled-control').classList.toggle('hidden', !filledRect)
+    element('element-graphic-mode-control').classList.toggle('hidden', !graphicMode)
     if (editableText) {
-      element('toolbar-content').value = item.text
-      element('toolbar-scale').value = String(item.scale)
-      element('toolbar-font-width').value = String(item.font_width)
+      element('element-content').value = item.text
+      element('element-scale').value = String(item.scale)
+      element('element-font-width').value = String(item.font_width)
     }
-    if (item.type === 'text' || item.type === 'rect') element('toolbar-align').value = item.align
-    if (item.type === 'rect') element('toolbar-filled').checked = item.filled
-    if (item.type === 'graphic') element('toolbar-mode').value = item.mode
+    if (alignedText) element('element-align').value = item.align
+    if (filledRect) element('element-filled').checked = item.filled
+    if (graphicMode) element('element-graphic-mode').value = item.mode
   }
 
   function graphicConnected(mode) {
@@ -702,7 +1035,7 @@ export function mountOLEDDesigner(root, host) {
   function editElement(item, fieldID) {
     selectElement(item.id, false)
     const editableText = item.type === 'text' || item.type === 'rect' || (item.type === 'graphic' && item.mode !== 'custom' && item.content === 'text')
-    const targetID = fieldID || (editableText ? 'toolbar-content' : 'toolbar-name')
+    const targetID = fieldID || (editableText ? 'element-content' : 'toolbar-name')
     const input = element(targetID)
     input.focus()
     if (typeof input.select === 'function') input.select()
@@ -734,6 +1067,9 @@ export function mountOLEDDesigner(root, host) {
         id: nextID('rect'), type, x: 3, y: 3, width: Math.min(20, width - 3), height: Math.min(12, height - 3), filled: false,
         text: '', scale: 1, font_width: 4, align: 'center',
       }
+    } else if (type === 'animation') {
+      item = { id: nextID('animation'), type, name: text.animation, x: 3, y: 3, asset: '', mode: 'custom', content: 'custom', width: Math.min(16, width - 3), height: Math.min(8, height - 3), pixels: '' }
+      item.pixels = normalizePixels('', item.width, item.height)
     } else if (type === 'live') {
       item = {
         id: nextID('live'), type: 'graphic', name: 'ON LIVE', x: 3, y: 3, mode: 'live', content: 'text', text: 'LIVE', scale: 1,
@@ -760,6 +1096,7 @@ export function mountOLEDDesigner(root, host) {
   function setRotation(value) {
     const next = Number(value)
     if (![0, 90, 180, 270].includes(next) || next === settings.rotation) return
+    if (externalMediaActive) stopExternalAssetPreview()
     settings.rotation = next
     clampAllElements()
     syncDimensionLimits()
@@ -873,7 +1210,7 @@ export function mountOLEDDesigner(root, host) {
     if (item.type === 'rect') {
       item.width = clamp(integer(item.width, 1), 1, width)
       item.height = clamp(integer(item.height, 1), 1, height)
-    } else if (item.type === 'graphic' && (item.mode === 'custom' || item.content === 'custom')) {
+    } else if (item.type === 'animation' || (item.type === 'graphic' && (item.mode === 'custom' || item.content === 'custom'))) {
       const nextWidth = clamp(integer(item.width, 1), 1, width)
       const nextHeight = clamp(integer(item.height, 1), 1, height)
       if (nextWidth !== item.width || nextHeight !== item.height) resizeGraphic(item, nextWidth, nextHeight)
@@ -914,6 +1251,7 @@ export function mountOLEDDesigner(root, host) {
   }
 
   function render() {
+    if (externalMediaActive) return
     const { width, height, portrait } = logicalSize()
     preview.width = width * pixelScale
     preview.height = height * pixelScale
@@ -935,6 +1273,55 @@ export function mountOLEDDesigner(root, host) {
     }
     drawSelection(context, width, height)
     notifySettingsState()
+  }
+
+  function stopExternalAssetPreview() {
+    if (externalMediaTimer !== null) clearInterval(externalMediaTimer)
+    externalMediaTimer = null
+    externalMediaActive = false
+    render()
+  }
+
+  function previewAsset(asset, bytes) {
+    if (!(bytes instanceof Uint8Array)) return
+    if (externalMediaTimer !== null) clearInterval(externalMediaTimer)
+    externalMediaTimer = null
+    externalMediaActive = false
+    const { width, height } = logicalSize()
+    const frameBytes = Number(asset.width) * Number(asset.height) / 8
+    const frames = Math.max(1, Number(asset.frames) || 1)
+    if (!Number.isInteger(frameBytes) || bytes.length < 14 + frameBytes * frames) {
+      render()
+      return
+    }
+    externalMediaActive = true
+    preview.width = width * pixelScale
+    preview.height = height * pixelScale
+    const context = preview.getContext('2d')
+    if (!context) return
+    const originX = Math.floor((width - asset.width) / 2)
+    const originY = Math.floor((height - asset.height) / 2)
+    let frame = 0
+    const paint = () => {
+      context.fillStyle = settings.display_enabled ? '#f4f7f6' : 'rgba(244, 247, 246, .34)'
+      context.fillRect(0, 0, preview.width, preview.height)
+      context.fillStyle = '#020706'
+      context.fillRect(0, 0, preview.width, preview.height)
+      context.fillStyle = settings.display_enabled ? '#f4f7f6' : 'rgba(244, 247, 246, .34)'
+      const offset = 14 + frame * frameBytes
+      for (let y = 0; y < asset.height; y += 1) {
+        for (let x = 0; x < asset.width; x += 1) {
+          if ((bytes[offset + (y >> 3) * asset.width + x] & (1 << (y & 7))) === 0) continue
+          const targetX = originX + x
+          const targetY = originY + y
+          if (targetX < 0 || targetX >= width || targetY < 0 || targetY >= height) continue
+          context.fillRect(targetX * pixelScale, targetY * pixelScale, pixelScale - 1, pixelScale - 1)
+        }
+      }
+      frame = (frame + 1) % frames
+    }
+    paint()
+    if (frames > 1) externalMediaTimer = setInterval(paint, Math.max(1, Math.round(1000 / Number(asset.fps || 30))))
   }
 
   function drawElement(pixels, width, height, item) {
@@ -1219,6 +1606,7 @@ export function mountOLEDDesigner(root, host) {
   }
 
   function beginDrag(event) {
+    if (externalMediaTimer !== null) stopExternalAssetPreview()
     const point = canvasPoint(event)
     const additive = additiveSelection(event)
     const handle = additive ? null : selectionHandle(point)
@@ -1335,6 +1723,9 @@ export function mountOLEDDesigner(root, host) {
             ...layer, x: item.x, y: item.y, width: item.width, height: item.height, filled: item.filled,
             text: item.text, scale: item.scale, font_width: item.font_width, align: item.align,
           }
+        }
+        if (item.type === 'animation') {
+          return { ...layer, x: item.x, y: item.y, asset: item.asset, width: item.width, height: item.height }
         }
         if (item.mode === 'custom') {
           return { ...layer, x: item.x, y: item.y, mode: item.mode, width: item.width, height: item.height, pixels: item.pixels }
@@ -1566,6 +1957,272 @@ export function mountOLEDDesigner(root, host) {
     refreshGraphicEditor(item)
   }
 
+  function closeBitmapImporter() {
+    element('bitmap-import-panel').classList.add('hidden')
+    element('bitmap-import-file').value = ''
+    bitmapImport = null
+    if (bitmapImportObjectURL) URL.revokeObjectURL(bitmapImportObjectURL)
+    bitmapImportObjectURL = ''
+  }
+
+  function bitmapImportPoint(event) {
+    const canvas = element('bitmap-import-source')
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: clamp(Math.floor((event.clientX - rect.left) * bitmapImport.image.naturalWidth / rect.width), 0, bitmapImport.image.naturalWidth - 1),
+      y: clamp(Math.floor((event.clientY - rect.top) * bitmapImport.image.naturalHeight / rect.height), 0, bitmapImport.image.naturalHeight - 1),
+    }
+  }
+
+  function importedBitmap() {
+    if (!bitmapImport) return { width: 1, height: 1, pixels: normalizePixels('', 1, 1) }
+    const width = bitmapImport.outputWidth
+    const height = bitmapImport.outputHeight
+    const frame = document.createElement('canvas')
+    frame.width = width
+    frame.height = height
+    const context = frame.getContext('2d', { willReadFrequently: true })
+    context.fillStyle = '#000'
+    context.fillRect(0, 0, width, height)
+    context.imageSmoothingEnabled = true
+    const crop = bitmapImport.crop
+    context.drawImage(bitmapImport.image, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height)
+    const rgba = context.getImageData(0, 0, width, height).data
+    const output = { width, height, pixels: normalizePixels('', width, height) }
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      const pixel = (y * width + x) * 4
+      const luminance = rgba[pixel] * 0.2126 + rgba[pixel + 1] * 0.7152 + rgba[pixel + 2] * 0.0722
+      if (rgba[pixel + 3] >= 128 && luminance >= 128) setGraphicPixel(output, x, y, true)
+    }
+    return output
+  }
+
+  function trimBlankBitmap(output) {
+    let left = output.width
+    let top = output.height
+    let right = -1
+    let bottom = -1
+    for (let y = 0; y < output.height; y += 1) for (let x = 0; x < output.width; x += 1) {
+      if (!graphicPixel(output, x, y)) continue
+      left = Math.min(left, x)
+      top = Math.min(top, y)
+      right = Math.max(right, x)
+      bottom = Math.max(bottom, y)
+    }
+    if (right < left || bottom < top) return output
+    const trimmed = { width: right - left + 1, height: bottom - top + 1, pixels: '' }
+    trimmed.pixels = normalizePixels('', trimmed.width, trimmed.height)
+    for (let y = 0; y < trimmed.height; y += 1) for (let x = 0; x < trimmed.width; x += 1) {
+      if (graphicPixel(output, left + x, top + y)) setGraphicPixel(trimmed, x, y, true)
+    }
+    return trimmed
+  }
+
+  function processedBitmapImport() {
+    const output = importedBitmap()
+    return bitmapImport?.trimBlank ? trimBlankBitmap(output) : output
+  }
+
+  function renderBitmapImport() {
+    if (!bitmapImport) return
+    const source = element('bitmap-import-source')
+    const maximumWidth = 520
+    const maximumHeight = 280
+    const scale = Math.min(1, maximumWidth / bitmapImport.image.naturalWidth, maximumHeight / bitmapImport.image.naturalHeight)
+    source.width = Math.max(1, Math.round(bitmapImport.image.naturalWidth * scale))
+    source.height = Math.max(1, Math.round(bitmapImport.image.naturalHeight * scale))
+    source.style.aspectRatio = `${bitmapImport.image.naturalWidth} / ${bitmapImport.image.naturalHeight}`
+    const context = source.getContext('2d')
+    context.drawImage(bitmapImport.image, 0, 0, source.width, source.height)
+    context.fillStyle = 'rgba(0, 0, 0, .58)'
+    context.fillRect(0, 0, source.width, source.height)
+    const crop = bitmapImport.crop
+    const cropX = crop.x * source.width / bitmapImport.image.naturalWidth
+    const cropY = crop.y * source.height / bitmapImport.image.naturalHeight
+    const cropWidth = crop.width * source.width / bitmapImport.image.naturalWidth
+    const cropHeight = crop.height * source.height / bitmapImport.image.naturalHeight
+    context.save()
+    context.beginPath()
+    context.rect(cropX, cropY, cropWidth, cropHeight)
+    context.clip()
+    context.drawImage(bitmapImport.image, 0, 0, source.width, source.height)
+    context.restore()
+    context.strokeStyle = '#f4f7f6'
+    context.lineWidth = 2
+    context.strokeRect(cropX + 1, cropY + 1, Math.max(1, cropWidth - 2), Math.max(1, cropHeight - 2))
+    source.classList.toggle('fixed-crop', bitmapImport.fixedCrop)
+    element('bitmap-import-crop-width').value = String(crop.width)
+    element('bitmap-import-crop-height').value = String(crop.height)
+
+    const rendered = processedBitmapImport()
+    bitmapImport.outputPixels = rendered.pixels
+    bitmapImport.renderedWidth = rendered.width
+    bitmapImport.renderedHeight = rendered.height
+    const output = element('bitmap-import-output')
+    const outputScale = Math.max(3, Math.min(12, Math.floor(240 / Math.max(rendered.width, rendered.height))))
+    output.width = rendered.width * outputScale
+    output.height = rendered.height * outputScale
+    output.style.aspectRatio = `${rendered.width} / ${rendered.height}`
+    element('bitmap-import-output-size').textContent = `${rendered.width}×${rendered.height}`
+    const outputContext = output.getContext('2d')
+    outputContext.fillStyle = '#080d0b'
+    outputContext.fillRect(0, 0, output.width, output.height)
+    const pixels = rendered
+    outputContext.fillStyle = '#f4f7f6'
+    for (let y = 0; y < pixels.height; y += 1) for (let x = 0; x < pixels.width; x += 1) {
+      if (graphicPixel(pixels, x, y)) outputContext.fillRect(x * outputScale, y * outputScale, outputScale, outputScale)
+    }
+  }
+
+  function loadBitmapImage(event) {
+    const file = event.target.files?.[0]
+    const item = selectedElement()
+    if (!file || !String(file.type || '').startsWith('image/') || !item || item.type !== 'graphic' || (item.mode !== 'custom' && item.content !== 'custom')) return
+    if (bitmapImportObjectURL) URL.revokeObjectURL(bitmapImportObjectURL)
+    bitmapImportObjectURL = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      const size = logicalSize()
+      const outputWidth = clamp(item.width, 1, size.width)
+      const outputHeight = clamp(item.height, 1, size.height)
+      const targetRatio = outputWidth / outputHeight
+      let cropWidth = image.naturalWidth
+      let cropHeight = Math.round(cropWidth / targetRatio)
+      if (cropHeight > image.naturalHeight) {
+        cropHeight = image.naturalHeight
+        cropWidth = Math.round(cropHeight * targetRatio)
+      }
+      bitmapImport = {
+        targetID: item.id,
+        image,
+        crop: { x: Math.floor((image.naturalWidth - cropWidth) / 2), y: Math.floor((image.naturalHeight - cropHeight) / 2), width: cropWidth, height: cropHeight },
+        outputWidth,
+        outputHeight,
+        outputPixels: '',
+        renderedWidth: outputWidth,
+        renderedHeight: outputHeight,
+        fixedCrop: false,
+        trimBlank: false,
+        drag: null,
+      }
+      element('bitmap-import-crop-width').max = String(image.naturalWidth)
+      element('bitmap-import-crop-height').max = String(image.naturalHeight)
+      element('bitmap-import-crop-width').value = String(cropWidth)
+      element('bitmap-import-crop-height').value = String(cropHeight)
+      element('bitmap-import-crop-width').disabled = true
+      element('bitmap-import-crop-height').disabled = true
+      element('bitmap-import-fixed-crop').checked = false
+      element('bitmap-import-trim-blank').checked = false
+      element('bitmap-import-width').max = String(size.width)
+      element('bitmap-import-height').max = String(size.height)
+      element('bitmap-import-width').value = String(outputWidth)
+      element('bitmap-import-height').value = String(outputHeight)
+      element('bitmap-import-panel').classList.remove('hidden')
+      renderBitmapImport()
+    }
+    image.onerror = closeBitmapImporter
+    image.src = bitmapImportObjectURL
+  }
+
+  function beginBitmapCrop(event) {
+    if (!bitmapImport) return
+    event.preventDefault()
+    const point = bitmapImportPoint(event)
+    if (bitmapImport.fixedCrop) {
+      const crop = bitmapImport.crop
+      const inside = point.x >= crop.x && point.x < crop.x + crop.width && point.y >= crop.y && point.y < crop.y + crop.height
+      const offsetX = inside ? point.x - crop.x : Math.floor(crop.width / 2)
+      const offsetY = inside ? point.y - crop.y : Math.floor(crop.height / 2)
+      crop.x = clamp(point.x - offsetX, 0, bitmapImport.image.naturalWidth - crop.width)
+      crop.y = clamp(point.y - offsetY, 0, bitmapImport.image.naturalHeight - crop.height)
+      bitmapImport.drag = { mode: 'move', offsetX, offsetY }
+    } else {
+      bitmapImport.drag = { mode: 'select', start: point }
+      bitmapImport.crop = { x: point.x, y: point.y, width: 1, height: 1 }
+    }
+    element('bitmap-import-source').setPointerCapture(event.pointerId)
+    renderBitmapImport()
+  }
+
+  function moveBitmapCrop(event) {
+    if (!bitmapImport?.drag) return
+    const point = bitmapImportPoint(event)
+    if (bitmapImport.drag.mode === 'move') {
+      const crop = bitmapImport.crop
+      crop.x = clamp(point.x - bitmapImport.drag.offsetX, 0, bitmapImport.image.naturalWidth - crop.width)
+      crop.y = clamp(point.y - bitmapImport.drag.offsetY, 0, bitmapImport.image.naturalHeight - crop.height)
+    } else {
+      const start = bitmapImport.drag.start
+      bitmapImport.crop = {
+        x: Math.min(start.x, point.x),
+        y: Math.min(start.y, point.y),
+        width: Math.abs(point.x - start.x) + 1,
+        height: Math.abs(point.y - start.y) + 1,
+      }
+    }
+    renderBitmapImport()
+  }
+
+  function endBitmapCrop(event) {
+    const source = element('bitmap-import-source')
+    if (source.hasPointerCapture(event.pointerId)) source.releasePointerCapture(event.pointerId)
+    if (bitmapImport) bitmapImport.drag = null
+  }
+
+  function setBitmapCropFixed(enabled) {
+    if (!bitmapImport) return
+    bitmapImport.fixedCrop = enabled
+    element('bitmap-import-crop-width').disabled = !enabled
+    element('bitmap-import-crop-height').disabled = !enabled
+    renderBitmapImport()
+  }
+
+  function setBitmapCropSize(property, value) {
+    if (!bitmapImport) return
+    if (String(value).trim() === '') return
+    const crop = bitmapImport.crop
+    const maximum = property === 'width' ? bitmapImport.image.naturalWidth : bitmapImport.image.naturalHeight
+    const next = clamp(integer(value, 1), 1, maximum)
+    const center = property === 'width' ? crop.x + crop.width / 2 : crop.y + crop.height / 2
+    crop[property] = next
+    if (property === 'width') crop.x = clamp(Math.round(center - next / 2), 0, bitmapImport.image.naturalWidth - next)
+    else crop.y = clamp(Math.round(center - next / 2), 0, bitmapImport.image.naturalHeight - next)
+    renderBitmapImport()
+  }
+
+  function setBitmapTrimBlank(enabled) {
+    if (!bitmapImport) return
+    bitmapImport.trimBlank = enabled
+    renderBitmapImport()
+  }
+
+  function setBitmapImportSize(property, value) {
+    if (!bitmapImport) return
+    const size = logicalSize()
+    bitmapImport[property] = clamp(integer(value, 1), 1, property === 'outputWidth' ? size.width : size.height)
+    renderBitmapImport()
+  }
+
+  function applyBitmapImport() {
+    if (!bitmapImport) return
+    const item = layout.elements.find((candidate) => candidate.id === bitmapImport.targetID)
+    if (!item || item.type !== 'graphic' || (item.mode !== 'custom' && item.content !== 'custom')) {
+      closeBitmapImporter()
+      return
+    }
+    const output = bitmapImport.outputPixels ? {
+      width: bitmapImport.renderedWidth,
+      height: bitmapImport.renderedHeight,
+      pixels: bitmapImport.outputPixels,
+    } : processedBitmapImport()
+    item.width = output.width
+    item.height = output.height
+    item.pixels = output.pixels
+    closeBitmapImporter()
+    clampElement(item)
+    syncEditor()
+  }
+
   function bind() {
     element('display-enabled').addEventListener('change', () => { collectGlobalForm(); render() })
     element('sleep').addEventListener('change', () => { collectGlobalForm(); notifySettingsState() })
@@ -1586,25 +2243,54 @@ export function mountOLEDDesigner(root, host) {
     bindNumber('element-width', 'width', 1, () => logicalSize().width)
     bindNumber('element-height', 'height', 1, () => logicalSize().height)
     element('toolbar-name').addEventListener('input', (event) => updateSelected('name', [...event.target.value].slice(0, 64).join('')))
-    element('toolbar-content').addEventListener('input', (event) => updateSelected('text', [...event.target.value].slice(0, 128).join('')))
-    element('toolbar-scale').addEventListener('change', (event) => updateSelected('scale', Number(event.target.value) === 2 ? 2 : 1))
-    element('toolbar-font-width').addEventListener('change', (event) => {
+    element('element-content').addEventListener('input', (event) => updateSelected('text', [...event.target.value].slice(0, 128).join('')))
+    element('element-scale').addEventListener('change', (event) => updateSelected('scale', Number(event.target.value) === 2 ? 2 : 1))
+    element('element-font-width').addEventListener('change', (event) => {
       const width = Number(event.target.value)
       updateSelected('font_width', [3, 4, 5].includes(width) ? width : 4)
     })
-    element('toolbar-align').addEventListener('change', (event) => updateSelected('align', textAlignments.includes(event.target.value) ? event.target.value : 'left'))
-    element('toolbar-filled').addEventListener('change', (event) => updateSelected('filled', event.target.checked))
+    element('element-align').addEventListener('change', (event) => updateSelected('align', textAlignments.includes(event.target.value) ? event.target.value : 'left'))
+    element('element-filled').addEventListener('change', (event) => updateSelected('filled', event.target.checked))
     element('element-text-width').addEventListener('input', (event) => updateSelected('width', clamp(integer(event.target.value, 1), 1, logicalSize().width)))
     element('element-full-width').addEventListener('change', (event) => updateSelected('full_width', event.target.checked))
-    element('toolbar-mode').addEventListener('change', (event) => setGraphicMode(event.target.value))
+    element('element-graphic-mode').addEventListener('change', (event) => setGraphicMode(event.target.value))
     element('element-graphic-content').addEventListener('change', (event) => updateSelected('content', graphicContents.includes(event.target.value) ? event.target.value : 'text'))
     element('element-graphic-filled').addEventListener('change', (event) => updateSelected('filled', event.target.checked))
     element('element-graphic-bordered').addEventListener('change', (event) => updateSelected('bordered', event.target.checked))
     element('element-graphic-width').addEventListener('input', (event) => setGraphicSize('width', clamp(integer(event.target.value, 1), 1, logicalSize().width)))
     element('element-graphic-height').addEventListener('input', (event) => setGraphicSize('height', clamp(integer(event.target.value, 1), 1, logicalSize().height)))
+    element('element-animation-asset').addEventListener('change', async (event) => {
+      const item = selectedElement()
+      if (!item || item.type !== 'animation') return
+      item.asset = event.target.value
+      const metadata = animationAssets.find((asset) => asset.id === item.asset)
+      if (metadata) { item.width = metadata.width; item.height = metadata.height; clampElement(item) }
+      ensureAnimationTimer()
+      await loadAnimationData(item.asset)
+      updateAnimationFrames()
+      syncEditor()
+    })
+    element('element-animation-width').addEventListener('input', (event) => updateSelected('width', clamp(integer(event.target.value, 1), 1, logicalSize().width)))
+    element('element-animation-height').addEventListener('input', (event) => updateSelected('height', clamp(integer(event.target.value, 1), 1, logicalSize().height)))
     element('bitmap-clear').addEventListener('click', () => transformGraphicPixels(() => false))
     element('bitmap-fill').addEventListener('click', () => transformGraphicPixels(() => true))
     element('bitmap-invert').addEventListener('click', () => transformGraphicPixels((enabled) => !enabled))
+    element('bitmap-import-open').addEventListener('click', () => element('bitmap-import-file').click())
+    element('bitmap-import-file').addEventListener('change', loadBitmapImage)
+    element('bitmap-import-width').addEventListener('input', (event) => setBitmapImportSize('outputWidth', event.target.value))
+    element('bitmap-import-height').addEventListener('input', (event) => setBitmapImportSize('outputHeight', event.target.value))
+    element('bitmap-import-fixed-crop').addEventListener('change', (event) => setBitmapCropFixed(event.target.checked))
+    element('bitmap-import-crop-width').addEventListener('input', (event) => setBitmapCropSize('width', event.target.value))
+    element('bitmap-import-crop-height').addEventListener('input', (event) => setBitmapCropSize('height', event.target.value))
+    element('bitmap-import-crop-width').addEventListener('change', (event) => event.target.value.trim() === '' ? renderBitmapImport() : setBitmapCropSize('width', event.target.value))
+    element('bitmap-import-crop-height').addEventListener('change', (event) => event.target.value.trim() === '' ? renderBitmapImport() : setBitmapCropSize('height', event.target.value))
+    element('bitmap-import-trim-blank').addEventListener('change', (event) => setBitmapTrimBlank(event.target.checked))
+    element('bitmap-import-cancel').addEventListener('click', closeBitmapImporter)
+    element('bitmap-import-apply').addEventListener('click', applyBitmapImport)
+    element('bitmap-import-source').addEventListener('pointerdown', beginBitmapCrop)
+    element('bitmap-import-source').addEventListener('pointermove', moveBitmapCrop)
+    element('bitmap-import-source').addEventListener('pointerup', endBitmapCrop)
+    element('bitmap-import-source').addEventListener('pointercancel', endBitmapCrop)
     element('bitmap-editor').addEventListener('pointerdown', beginBitmap)
     element('bitmap-editor').addEventListener('pointermove', paintBitmap)
     element('bitmap-editor').addEventListener('pointerup', endBitmap)
@@ -1615,7 +2301,7 @@ export function mountOLEDDesigner(root, host) {
         if (!item || item.type !== 'text') return
         item.text = `${item.text}${button.dataset.token}`.slice(0, 128)
         syncEditor()
-        element('toolbar-content').focus()
+        element('element-content').focus()
       })
     })
     preview.addEventListener('pointerdown', beginDrag)
@@ -1659,6 +2345,9 @@ export function mountOLEDDesigner(root, host) {
 
   translate()
   bind()
+  window.addEventListener('onekvm-oled-assets-changed', refreshAnimationAssets)
+  void refreshAnimationAssets()
+  if (element('media-card')) bindMedia()
   Promise.all([Promise.resolve().then(loadChineseFont), load()])
     .then(() => syncEditor())
     .catch((error) => setError(error.message || String(error)))
@@ -1674,11 +2363,22 @@ export function mountOLEDDesigner(root, host) {
 
   return {
     collectSettings: () => {
+      if (layout.elements.some((item) => item.type === 'animation' && !item.asset)) throw new Error(text.selectAnimationAsset)
       const collected = collectSettings()
       if (new TextEncoder().encode(collected.layout_json).length > maxLayoutBytes) throw new Error(text.layoutTooLarge)
       return collected
     },
     addElement,
+    selectLayer: (id, additive = false) => selectElement(id, additive),
+    toggleLayer: (id) => {
+      const item = layout.elements.find((candidate) => candidate.id === id)
+      if (!item) return
+      item.hidden = !item.hidden
+      syncEditor()
+    },
+    reorderLayer: reorderLayerByDrop,
+    updateToolbar,
+    runToolbarAction,
     exportLayers,
     importLayers,
     restoreDefaultCanvas,
@@ -1688,8 +2388,18 @@ export function mountOLEDDesigner(root, host) {
     dispose: () => {
       clearInterval(statusInterval)
       clearInterval(liveInterval)
+      if (animationTimer !== null) clearInterval(animationTimer)
+      animationTimer = null
+      if (externalMediaTimer !== null) clearInterval(externalMediaTimer)
+      externalMediaTimer = null
       root.removeEventListener('keydown', handleShortcut)
+      window.removeEventListener('onekvm-oled-assets-changed', refreshAnimationAssets)
       preview.removeEventListener('keydown', handleCanvasKey)
+      if (mediaObjectURL) URL.revokeObjectURL(mediaObjectURL)
+      if (bitmapImportObjectURL) URL.revokeObjectURL(bitmapImportObjectURL)
+      mediaPreviewURLs.forEach((url) => URL.revokeObjectURL(url))
     },
+    previewAsset,
+    stopAssetPreview: stopExternalAssetPreview,
   }
 }

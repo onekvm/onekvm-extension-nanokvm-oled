@@ -391,6 +391,22 @@ bool parseLayout(std::string_view raw, const std::array<std::string, 4> &legacy,
           error = "OLED rectangle element is invalid";
         return false;
       }
+    } else if (element.type == "animation") {
+      if (!jsonString(item, "asset", {}, element.asset, error) ||
+          element.asset.size() <= 4 || !element.asset.ends_with(".oan") ||
+          element.asset.size() > 96 ||
+          !std::all_of(element.asset.begin(), element.asset.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+          }) ||
+          !jsonInt(item, "width", 0, element.width, error) ||
+          !jsonInt(item, "height", 0, element.height, error) ||
+          element.width < 1 || element.width > kMaxWidth ||
+          element.height < 1 || element.height > kMaxHeight) {
+        if (error.empty())
+          error = "OLED animation element is invalid";
+        return false;
+      }
     } else if (element.type == "graphic") {
       if (!jsonString(item, "mode", "custom", element.mode, error) ||
           (element.mode != "custom" && element.mode != "eth" &&
