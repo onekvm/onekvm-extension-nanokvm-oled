@@ -27,6 +27,12 @@ public:
 
   bool open(const std::string &path, int address, std::string &error) {
     close();
+    descriptor_ = ::open(kRtosDevice, O_RDWR | O_CLOEXEC);
+    if (descriptor_ >= 0) {
+      rtos_ = true;
+      return true;
+    }
+    rtos_ = false;
     descriptor_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
     if (descriptor_ < 0) {
       error = "open OLED bus " + path + ": " + std::strerror(errno);
@@ -41,6 +47,8 @@ public:
   }
 
   bool initialize(std::string &error) {
+    if (rtos_)
+      return true;
     static constexpr std::array<uint8_t, 30> sequence = {
         0xae, 0x00, 0x10, 0x40, 0x81, 0xcf, 0xa1, 0xc8, 0xa6, 0xa8,
         0x3f, 0xd3, 0x00, 0xd5, 0x80, 0xd9, 0xf1, 0xda, 0x12, 0xdb,
@@ -53,6 +61,8 @@ public:
   }
 
   bool show(const Canvas &canvas, std::string &error) {
+    if (rtos_)
+      return writeRtosFrame(canvas, error);
     const int pages = profile_.height / 8;
     for (int page = 0; page < pages; ++page) {
       const uint8_t position[] = {
@@ -71,6 +81,8 @@ public:
 
   bool showChanged(const Canvas &previous, const Canvas &next,
                    std::string &error) {
+    if (rtos_)
+      return writeRtosFrame(next, error);
     const int pages = profile_.height / 8;
     for (int page = 0; page < pages; ++page) {
       const auto changed = changedColumns(previous, next, page, profile_.width);
@@ -95,6 +107,13 @@ public:
   }
 
   bool off(std::string &error) {
+    if (rtos_) {
+      if (::ioctl(descriptor_, _IO('O', 5), 0) < 0) {
+        error = "OLED off: " + std::string(std::strerror(errno));
+        return false;
+      }
+      return true;
+    }
     Canvas blank(profile_.width, profile_.height);
     if (!show(blank, error))
       return false;
@@ -106,9 +125,22 @@ public:
     if (descriptor_ >= 0)
       ::close(descriptor_);
     descriptor_ = -1;
+    rtos_ = false;
   }
 
 private:
+  bool writeRtosFrame(const Canvas &canvas, std::string &error) {
+    const auto &frame = canvas.data();
+    const ssize_t written =
+        ::write(descriptor_, frame.data(), frame.size());
+    if (written != static_cast<ssize_t>(frame.size())) {
+      error = "write OLED: " +
+              std::string(written < 0 ? std::strerror(errno) : "short write");
+      return false;
+    }
+    return true;
+  }
+
   bool writeBytes(uint8_t control, const uint8_t *bytes, std::size_t count,
                   std::string &error) {
     std::array<uint8_t, kMaxWidth + 1> message{};
@@ -129,6 +161,7 @@ private:
 
   DisplayProfile profile_;
   int descriptor_ = -1;
+  bool rtos_ = false;
 };
 
 bool openDisplay(Device &device, const std::string &path, int address,
