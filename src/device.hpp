@@ -110,6 +110,8 @@ public:
     return true;
   }
 
+  bool usesRtos() const { return rtos_; }
+
   bool off(std::string &error) {
     if (rtos_) {
       if (::ioctl(descriptor_, _IO('O', 5), 0) < 0) {

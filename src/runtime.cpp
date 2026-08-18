@@ -699,6 +699,9 @@ bool runDisplay(const Options &options, std::string &error) {
     if (!source.waitUntil(nextWake, error))
       return false;
   }
+  /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */
+  if (device.usesRtos())
+    return true;
   return !awake || device.off(error);
 }
 
