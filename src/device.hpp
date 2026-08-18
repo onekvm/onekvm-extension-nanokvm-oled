@@ -33,6 +33,10 @@ public:
       return true;
     }
     rtos_ = false;
+    if (::access("/run/onekvm/oled-rtos", R_OK) == 0) {
+      error = "C906L owns the OLED; /dev/onekvm-oled is not available";
+      return false;
+    }
     descriptor_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
     if (descriptor_ < 0) {
       error = "open OLED bus " + path + ": " + std::strerror(errno);
