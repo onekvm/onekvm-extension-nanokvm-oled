@@ -69,7 +69,7 @@
   },
   "secret_fields": [],
   "memory_budget": "2M",
-  "resource_limits": {"memory_max": "32M", "cpu_quota": "40%", "tasks_max": 8, "limit_nofile": 32},
+  "resource_limits": {"memory_max": "32M", "cpu_quota": "80%", "tasks_max": 8, "limit_nofile": 32},
   "healthcheck": {
     "type": "exec",
     "command": ["bin/onekvm-nanokvm-oled", "--health"],

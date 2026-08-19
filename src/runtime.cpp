@@ -26,7 +26,6 @@
 #include <span>
 #include <thread>
 #include <unordered_map>
-#include <poll.h>
 #include <unistd.h>
 #include <utility>
 
@@ -694,10 +693,10 @@ bool runDisplay(const Options &options, std::string &error) {
     /* ProtectClock makes CLOCK_MONOTONIC nanosleep ~50 ms. poll(2)
      * takes a relative millisecond timeout and stays on 33 ms. */
     if (nextWake == nextAnimation) {
-      /* A single 33 ms poll/nanosleep is stretched to ~50 ms under
-       * ProtectClock. Slice the wait so wall time can still hit 33 ms. */
-      while (Clock::now() < nextAnimation)
-        (void)::poll(nullptr, 0, 1);
+      /* poll/nanosleep are ~50 ms under ProtectClock. Spin on
+       * CLOCK_MONOTONIC until the 33 ms deadline. */
+      while (Clock::now() < nextAnimation) {
+      }
     } else if (!source.waitUntil(nextWake, error))
       return false;
   }
