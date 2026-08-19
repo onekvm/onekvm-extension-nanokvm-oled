@@ -391,12 +391,8 @@ bool loadAnimation(const std::filesystem::path &path, CachedAnimation &output) {
 }
 
 void updateAnimationLayers(
-    Config &config, const std::filesystem::path &assetRoot,
-    Clock::time_point epoch,
+    Config &config, const std::filesystem::path &assetRoot, uint64_t tick,
     std::unordered_map<std::string, CachedAnimation> &cache) {
-  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           Clock::now() - epoch)
-                           .count();
   for (Element &element : config.layout.elements) {
     if (element.hidden || element.type != "animation" || element.asset.empty())
       continue;
@@ -415,9 +411,10 @@ void updateAnimationLayers(
       element.pixels.clear();
       continue;
     }
-    const uint64_t frame = static_cast<uint64_t>(std::max<int64_t>(0, elapsed)) *
-                           static_cast<uint64_t>(animation.fps) / 1000U %
-                           animation.frames;
+    /* Index from the 30 Hz apply tick, not CLOCK_MONOTONIC. A 50 ms
+     * coarse clock repeats the same OAN frame and drops seq to 20/s. */
+    const uint64_t frame =
+        tick * static_cast<uint64_t>(animation.fps) / 30U % animation.frames;
     const std::size_t frameBytes = static_cast<std::size_t>(animation.width) *
                                    animation.height / 8;
     const std::size_t offset = static_cast<std::size_t>(frame) * frameBytes;
@@ -473,12 +470,12 @@ bool runDisplay(const Options &options, std::string &error) {
       std::getenv("ONEKVM_EXTENSION_DATA") != nullptr
           ? std::filesystem::path(std::getenv("ONEKVM_EXTENSION_DATA")) / "assets"
           : std::filesystem::path{};
-  const auto animationEpoch = Clock::now();
+  uint64_t animationTick = 0;
   std::unordered_map<std::string, CachedAnimation> animationCache;
   auto renderDisplayFrame = [&](const Config &source, const Status &current,
                                 bool live) {
     Config animated = source;
-    updateAnimationLayers(animated, animationRoot, animationEpoch,
+    updateAnimationLayers(animated, animationRoot, animationTick,
                           animationCache);
     animated.rotation = deviceRotation(profile, source.rotation);
     return render(animated, current, live, profile.width, profile.height);
@@ -663,21 +660,7 @@ bool runDisplay(const Options &options, std::string &error) {
         if (timeoutMs > 0)
           (void)::poll(nullptr, 0, timeoutMs);
       }
-      static int tickSamples = 0;
-      if (tickSamples < 48 && extensionData != nullptr) {
-        static Clock::time_point lastTick;
-        const auto tickNow = monotonicNow();
-        const auto period =
-            tickSamples == 0 ? 0ms : (tickNow - lastTick);
-        lastTick = tickNow;
-        std::ofstream tick(std::filesystem::path(extensionData) / "tick.log",
-                           std::ios::app);
-        tick << "e=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
-             << " s=" << timeoutMs
-             << " p=" << std::chrono::duration_cast<std::chrono::milliseconds>(period).count()
-             << '\n';
-        tickSamples++;
-      }
+      animationTick++;
       nextAnimation = Clock::now();
     }
     if (now >= nextShift) {
