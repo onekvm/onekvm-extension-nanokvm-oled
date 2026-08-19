@@ -60,6 +60,8 @@ public:
   }
 
   void shift(int dx, int dy) {
+    if (dx == 0 && dy == 0)
+      return;
     Canvas shifted(width_, height_);
     for (int y = 0; y < height_; ++y)
       for (int x = 0; x < width_; ++x)

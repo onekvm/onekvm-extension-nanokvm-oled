@@ -558,11 +558,17 @@ bool runDisplay(const Options &options, std::string &error) {
       }
       if (!nextConfigValue.burnInProtection)
         shiftIndex = 0;
-      Canvas visible = nextFrame;
-      visible.shift(shifts[static_cast<std::size_t>(shiftIndex)].first,
-                    shifts[static_cast<std::size_t>(shiftIndex)].second);
-      if (!showVisible(visible))
-        return false;
+      const int dx = shifts[static_cast<std::size_t>(shiftIndex)].first;
+      const int dy = shifts[static_cast<std::size_t>(shiftIndex)].second;
+      if (dx == 0 && dy == 0) {
+        if (!showVisible(nextFrame))
+          return false;
+      } else {
+        Canvas visible = nextFrame;
+        visible.shift(dx, dy);
+        if (!showVisible(visible))
+          return false;
+      }
       awake = true;
       lastChange = Clock::now();
     }

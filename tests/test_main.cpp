@@ -72,6 +72,9 @@ int main() {
   assert(latinFont.at(0, 0) && latinFont.at(3, 0) &&
          latinFont.at(1, 1) && latinFont.at(6, 1) &&
          latinFont.at(5, 2) && latinFont.at(7, 2) && latinFont.at(10, 0));
+  Canvas unshifted = latinFont;
+  unshifted.shift(0, 0);
+  assert(unshifted == latinFont);
   Layout cubeLegacy = layoutFromLines({"1", "2", "3", "4"}, 0, 128, 64);
   assert(cubeLegacy.elements[0].y == 1 && cubeLegacy.elements[1].y == 17 &&
          cubeLegacy.elements[3].y == 49);
