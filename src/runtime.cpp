@@ -26,6 +26,7 @@
 #include <span>
 #include <thread>
 #include <unordered_map>
+#include <poll.h>
 #include <unistd.h>
 #include <utility>
 
@@ -690,27 +691,15 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation});
-    if (extensionData != nullptr) {
-      static int tickLog;
-      if (tickLog++ < 12) {
-        auto msLeft = [](Clock::time_point t) {
-          return std::chrono::duration_cast<std::chrono::milliseconds>(
-                     t - Clock::now())
-              .count();
-        };
-        std::ofstream log(std::string(extensionData) + "/tick.log",
-                          std::ios::app);
-        log << "same=" << (nextWake == nextAnimation)
-            << " anim=" << msLeft(nextAnimation)
-            << " play=" << msLeft(nextPlayback)
-            << " cfg=" << msLeft(nextConfig)
-            << " blink=" << msLeft(nextLiveBlink)
-            << " sleep=" << msLeft(nextSleep) << '\n';
-      }
-    }
-    if (nextWake == nextAnimation)
-      std::this_thread::sleep_until(nextWake);
-    else if (!source.waitUntil(nextWake, error))
+    /* ProtectClock makes CLOCK_MONOTONIC nanosleep ~50 ms. poll(2)
+     * takes a relative millisecond timeout and stays on 33 ms. */
+    if (nextWake == nextAnimation) {
+      const auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              nextAnimation - Clock::now())
+                              .count();
+      if (remain > 0)
+        (void)::poll(nullptr, 0, static_cast<int>(remain));
+    } else if (!source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */
