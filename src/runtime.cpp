@@ -487,9 +487,8 @@ bool runDisplay(const Options &options, std::string &error) {
   Canvas lastFrame = frame;
   auto lastChange = Clock::now();
   auto nextConfig = Clock::now() + 500ms;
-  auto nextAnimation = hasAnimationLayers(config)
-                           ? Clock::now() + 33ms
-                           : Clock::time_point::max();
+  auto nextAnimation = config.enabled ? Clock::now() + 33ms
+                                       : Clock::time_point::max();
   auto nextShift = Clock::now() + options.shiftInterval;
   auto nextSleep = Clock::now() + 1s;
   auto nextLiveBlink = Clock::now() + 1s;
@@ -580,8 +579,7 @@ bool runDisplay(const Options &options, std::string &error) {
     else if (settingsChanged || !liveFrames.has_value() ||
              (frameChanged && !hasAnimationLayers(config)))
       refreshLiveFrames();
-    if (hasAnimationLayers(config) &&
-        nextAnimation == Clock::time_point::max())
+    if (config.enabled && nextAnimation == Clock::time_point::max())
       nextAnimation = Clock::now();
     return true;
   };
