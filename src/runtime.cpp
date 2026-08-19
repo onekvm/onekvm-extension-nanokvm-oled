@@ -694,11 +694,10 @@ bool runDisplay(const Options &options, std::string &error) {
     /* ProtectClock makes CLOCK_MONOTONIC nanosleep ~50 ms. poll(2)
      * takes a relative millisecond timeout and stays on 33 ms. */
     if (nextWake == nextAnimation) {
-      const auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              nextAnimation - Clock::now())
-                              .count();
-      if (remain > 0)
-        (void)::poll(nullptr, 0, static_cast<int>(remain));
+      /* A single 33 ms poll/nanosleep is stretched to ~50 ms under
+       * ProtectClock. Slice the wait so wall time can still hit 33 ms. */
+      while (Clock::now() < nextAnimation)
+        (void)::poll(nullptr, 0, 1);
     } else if (!source.waitUntil(nextWake, error))
       return false;
   }
