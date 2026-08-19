@@ -645,12 +645,17 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
+      /* Period is 33 ms including render+show. Spinning another 33 ms
+       * after a ~17 ms apply made the wall period ~50 ms (20 FPS). */
+      const auto frameStart = monotonicNow();
       if (!apply(config, status, false))
         return false;
-      /* ProtectClock coarsens CLOCK_MONOTONIC to 50 ms. Measure the
-       * 33 ms period on MONOTONIC_RAW. */
-      const auto spinStart = monotonicNow();
-      while (monotonicNow() - spinStart < 33ms) {
+      constexpr auto kAnimationPeriod = 33ms;
+      const auto elapsed = monotonicNow() - frameStart;
+      if (elapsed < kAnimationPeriod) {
+        if (!source.waitUntil(Clock::now() + (kAnimationPeriod - elapsed),
+                              error))
+          return false;
       }
       nextAnimation = Clock::now();
     }
