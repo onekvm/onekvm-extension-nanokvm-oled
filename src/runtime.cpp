@@ -334,7 +334,9 @@ bool playAsset(const std::filesystem::path &assetPath, Device &device,
 }
 
 int deviceRotation(const DisplayProfile &profile, int rotation) {
-  return profile.variant == "cube" ? (rotation + 180) % 360 : rotation;
+  /* C906L already programs Cube SSD1306 remap/COM. Do not add another 180°. */
+  (void)profile;
+  return rotation;
 }
 
 struct CachedAnimation {
