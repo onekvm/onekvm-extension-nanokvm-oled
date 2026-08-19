@@ -590,8 +590,15 @@ bool runDisplay(const Options &options, std::string &error) {
     if (source.take(nextStatus)) {
       if (nextStatus.active != status.active)
         liveIndicatorOn = true;
-      if (!apply(config, nextStatus, false))
-        return false;
+      /* Animation already redraws at 30 FPS. Do not let 20 Hz status
+       * updates serialize another full frame. */
+      if (!hasAnimationLayers(config) ||
+          nextStatus.active != status.active) {
+        if (!apply(config, nextStatus, false))
+          return false;
+      } else {
+        status = nextStatus;
+      }
     }
     const auto now = Clock::now();
     if (!requestPath.empty() && now >= nextPlayback) {
