@@ -315,6 +315,7 @@ bool playAsset(const std::filesystem::path &assetPath, Device &device,
   std::vector<unsigned char> bytes(frameBytes);
   std::optional<Canvas> previous;
   for (uint32_t frame = 0; frame < frames && !stopped.load(); ++frame) {
+    const auto frameStart = Clock::now();
     file.read(reinterpret_cast<char *>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
     if (!file) { error = "could not read OLED animation"; return false; }
@@ -328,7 +329,10 @@ bool playAsset(const std::filesystem::path &assetPath, Device &device,
       return false;
     }
     previous = canvas;
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / fps));
+    const auto elapsed = Clock::now() - frameStart;
+    const auto period = std::chrono::milliseconds(1000 / fps);
+    if (elapsed < period)
+      std::this_thread::sleep_for(period - elapsed);
   }
   return !stopped.load();
 }
@@ -564,12 +568,10 @@ bool runDisplay(const Options &options, std::string &error) {
       displayedFrame.reset();
       shiftIndex = 0;
       config = nextConfigValue;
-      nextAnimation = hasAnimationLayers(config)
-                          ? Clock::now() + 33ms
-                          : Clock::time_point::max();
       status = nextStatus;
       lastFrame = nextFrame;
       liveFrames.reset();
+      nextAnimation = Clock::time_point::max();
       return true;
     }
     if (settingsChanged || frameChanged) {
@@ -589,15 +591,15 @@ bool runDisplay(const Options &options, std::string &error) {
       lastChange = Clock::now();
     }
     config = nextConfigValue;
-    nextAnimation = hasAnimationLayers(config)
-                        ? Clock::now() + 33ms
-                        : Clock::time_point::max();
     status = nextStatus;
     lastFrame = nextFrame;
     if (!config.enabled || !status.active || !hasLiveLayer(config))
       liveFrames.reset();
     else if (settingsChanged || frameChanged || !liveFrames.has_value())
       refreshLiveFrames();
+    if (hasAnimationLayers(config) &&
+        nextAnimation == Clock::time_point::max())
+      nextAnimation = Clock::now();
     return true;
   };
 
@@ -647,7 +649,11 @@ bool runDisplay(const Options &options, std::string &error) {
     if (now >= nextAnimation) {
       if (!apply(config, status, false))
         return false;
-      nextAnimation = now + 33ms;
+      /* Tick from the scheduled instant so render+I2C does not add extra
+       * delay on top of the 33 ms 30 FPS period. */
+      nextAnimation += 33ms;
+      if (nextAnimation < Clock::now())
+        nextAnimation = Clock::now();
     }
     if (now >= nextShift) {
       if (awake && config.enabled && config.burnInProtection) {
@@ -708,8 +714,8 @@ bool runDisplay(const Options &options, std::string &error) {
 }
 
 int applicationMain(int argc, char **argv) {
-  // OLED updates are background work; keep video, HID and core services ahead.
-  (void)::setpriority(PRIO_PROCESS, 0, 19);
+  /* 30 FPS animation cannot run at nice 19 under HDMI encode load. */
+  (void)::setpriority(PRIO_PROCESS, 0, 5);
   Options options;
   std::string error;
   if (!parseOptions(argc, argv, options, error)) {
