@@ -540,10 +540,10 @@ bool runDisplay(const Options &options, std::string &error) {
   };
   refreshLiveFrames();
   auto apply = [&](const Config &nextConfigValue, const Status &nextStatus,
-                   bool settingsChanged) -> bool {
+                   bool settingsChanged, bool forceShow = false) -> bool {
     Canvas nextFrame = renderDisplayFrame(nextConfigValue, nextStatus,
                                           liveIndicatorOn);
-    const bool frameChanged = !(nextFrame == lastFrame);
+    const bool frameChanged = forceShow || !(nextFrame == lastFrame);
     if (!nextConfigValue.enabled) {
       if (awake && !device.off(error))
         return false;
@@ -647,20 +647,19 @@ bool runDisplay(const Options &options, std::string &error) {
        * after apply, and do not use D-Bus poll for the remainder: a
        * readable bus fd would cut the wait, a 20 Hz signal would stretch
        * it. poll(0, timeout) is a relative millisecond sleep. */
+      animationTick++;
       const auto frameStart = monotonicNow();
-      if (!apply(config, status, false))
+      if (!apply(config, status, false, true))
         return false;
       constexpr auto kAnimationPeriod = 33ms;
       const auto elapsed = monotonicNow() - frameStart;
-      int timeoutMs = 0;
       if (elapsed < kAnimationPeriod) {
-        timeoutMs = static_cast<int>(std::chrono::duration_cast<
+        const int timeoutMs = static_cast<int>(std::chrono::duration_cast<
             std::chrono::milliseconds>(kAnimationPeriod - elapsed)
-                                         .count());
+                                                   .count());
         if (timeoutMs > 0)
           (void)::poll(nullptr, 0, timeoutMs);
       }
-      animationTick++;
       nextAnimation = Clock::now();
     }
     if (now >= nextShift) {
