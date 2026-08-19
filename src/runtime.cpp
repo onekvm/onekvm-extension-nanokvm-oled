@@ -595,7 +595,8 @@ bool runDisplay(const Options &options, std::string &error) {
     lastFrame = nextFrame;
     if (!config.enabled || !status.active || !hasLiveLayer(config))
       liveFrames.reset();
-    else if (settingsChanged || frameChanged || !liveFrames.has_value())
+    else if (settingsChanged || !liveFrames.has_value() ||
+             (frameChanged && !hasAnimationLayers(config)))
       refreshLiveFrames();
     if (hasAnimationLayers(config) &&
         nextAnimation == Clock::time_point::max())
