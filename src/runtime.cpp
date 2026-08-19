@@ -26,10 +26,20 @@
 #include <span>
 #include <thread>
 #include <unordered_map>
+#include <time.h>
 #include <unistd.h>
 #include <utility>
 
 namespace onekvm::oled {
+
+Clock::time_point monotonicNow() {
+  timespec ts{};
+  if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) != 0 &&
+      clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return Clock::now();
+  return Clock::time_point(std::chrono::seconds(ts.tv_sec) +
+                           std::chrono::nanoseconds(ts.tv_nsec));
+}
 
 uint64_t waitTimeoutUsec(Clock::time_point now, Clock::time_point deadline) {
   if (deadline <= now)
@@ -637,9 +647,12 @@ bool runDisplay(const Options &options, std::string &error) {
     if (now >= nextAnimation) {
       if (!apply(config, status, false))
         return false;
-      nextAnimation += 33ms;
-      if (nextAnimation < Clock::now())
-        nextAnimation = Clock::now();
+      /* ProtectClock coarsens CLOCK_MONOTONIC to 50 ms. Measure the
+       * 33 ms period on MONOTONIC_RAW. */
+      const auto spinStart = monotonicNow();
+      while (monotonicNow() - spinStart < 33ms) {
+      }
+      nextAnimation = Clock::now();
     }
     if (now >= nextShift) {
       if (awake && config.enabled && config.burnInProtection) {
@@ -692,12 +705,8 @@ bool runDisplay(const Options &options, std::string &error) {
                                     nextLiveBlink, nextPlayback, nextAnimation});
     /* ProtectClock makes CLOCK_MONOTONIC nanosleep ~50 ms. poll(2)
      * takes a relative millisecond timeout and stays on 33 ms. */
-    if (nextWake == nextAnimation) {
-      /* poll/nanosleep are ~50 ms under ProtectClock. Spin on
-       * CLOCK_MONOTONIC until the 33 ms deadline. */
-      while (Clock::now() < nextAnimation) {
-      }
-    } else if (!source.waitUntil(nextWake, error))
+    if (nextWake != nextAnimation &&
+        !source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */
