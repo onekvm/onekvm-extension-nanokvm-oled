@@ -160,10 +160,6 @@ public:
         height % 8 != 0)
       return;
     if (rotation == 0 && y % 8 == 0) {
-      if (x == 0 && y == 0 && width == width_ && height == height_) {
-        std::copy(bytes.begin(), bytes.end(), data_.begin());
-        return;
-      }
       const int pages = height / 8;
       for (int page = 0; page < pages; ++page) {
         const int targetPage = y / 8 + page;
