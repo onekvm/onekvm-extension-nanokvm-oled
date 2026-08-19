@@ -637,11 +637,10 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
+      const auto frameStart = Clock::now();
       if (!apply(config, status, false))
         return false;
-      /* Tick from the scheduled instant so render+I2C does not add extra
-       * delay on top of the 33 ms 30 FPS period. */
-      nextAnimation += 33ms;
+      nextAnimation = frameStart + 33ms;
       if (nextAnimation < Clock::now())
         nextAnimation = Clock::now();
     }
@@ -694,12 +693,15 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation});
-    /* Do not wait on D-Bus while an animation is scheduled. Core status
-     * arrives near 20 Hz and would stretch the 33 ms tick to that period. */
+    /* Animation sleep must not share sd_bus_wait. Core status is ~20 Hz. */
     if (nextAnimation != Clock::time_point::max()) {
       if (Clock::now() < nextAnimation)
-        std::this_thread::sleep_until(nextAnimation);
-    } else if (!source.waitUntil(nextWake, error))
+        std::this_thread::sleep_for(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                nextAnimation - Clock::now()));
+      continue;
+    }
+    if (!source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */
