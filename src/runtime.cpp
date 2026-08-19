@@ -18,6 +18,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <vector>
 #include <signal.h>
 #include <sys/resource.h>
 #include <string>
@@ -348,15 +349,14 @@ struct CachedAnimation {
   int height = 0;
   int fps = 0;
   uint32_t frames = 0;
-  std::ifstream file;
-  std::array<unsigned char, kMaxFrameBytes> frame{};
+  std::vector<unsigned char> data;
 };
 
 bool loadAnimation(const std::filesystem::path &path, CachedAnimation &output) {
-  output.file.open(path, std::ios::binary);
+  std::ifstream file(path, std::ios::binary);
   std::array<unsigned char, 14> header{};
-  output.file.read(reinterpret_cast<char *>(header.data()), header.size());
-  if (!output.file ||
+  file.read(reinterpret_cast<char *>(header.data()), header.size());
+  if (!file ||
       std::string_view(reinterpret_cast<char *>(header.data()), 4) != "OAN1")
     return false;
   output.width = static_cast<int>(header[4] | (header[5] << 8));
@@ -373,10 +373,10 @@ bool loadAnimation(const std::filesystem::path &path, CachedAnimation &output) {
   const std::size_t total = frameBytes * output.frames;
   if (total > 32U * 1024U * 1024U || total / frameBytes != output.frames)
     return false;
-  output.file.seekg(0, std::ios::end);
-  const std::streamoff fileSize = output.file.tellg();
-  output.file.clear();
-  return fileSize == static_cast<std::streamoff>(header.size() + total);
+  output.data.resize(total);
+  file.read(reinterpret_cast<char *>(output.data.data()),
+            static_cast<std::streamsize>(total));
+  return static_cast<std::size_t>(file.gcount()) == total;
 }
 
 void updateAnimationLayers(
@@ -409,20 +409,17 @@ void updateAnimationLayers(
                            animation.frames;
     const std::size_t frameBytes = static_cast<std::size_t>(animation.width) *
                                    animation.height / 8;
-    animation.file.clear();
-    animation.file.seekg(static_cast<std::streamoff>(14 + frame * frameBytes),
-                         std::ios::beg);
-    animation.file.read(reinterpret_cast<char *>(animation.frame.data()),
-                        static_cast<std::streamsize>(frameBytes));
-    if (animation.file.gcount() != static_cast<std::streamsize>(frameBytes)) {
+    const std::size_t offset = static_cast<std::size_t>(frame) * frameBytes;
+    if (offset + frameBytes > animation.data.size()) {
       element.pixels.clear();
       continue;
     }
     element.width = animation.width;
     element.height = animation.height;
     element.pixels.assign(
-        reinterpret_cast<const char *>(animation.frame.data()),
-        reinterpret_cast<const char *>(animation.frame.data()) + frameBytes);
+        reinterpret_cast<const char *>(animation.data.data() + offset),
+        reinterpret_cast<const char *>(animation.data.data() + offset +
+                                       frameBytes));
   }
 }
 
