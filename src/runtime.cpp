@@ -497,7 +497,7 @@ bool runDisplay(const Options &options, std::string &error) {
   const std::filesystem::path requestPath = extensionData != nullptr
       ? std::filesystem::path(extensionData) / ".play.request"
       : std::filesystem::path{};
-  auto nextPlayback = Clock::now();
+  auto nextPlayback = Clock::now() + 100ms;
   int shiftIndex = 0;
   static constexpr std::array<std::pair<int, int>, 4> shifts = {
       {{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
@@ -688,7 +688,12 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation});
-    if (!source.waitUntil(nextWake, error))
+    /* Core emits FPS/status on D-Bus at ~20 Hz. Waiting on the bus for the
+     * 33 ms animation tick stretches the period to that signal. Sleep the
+     * animation clock directly; status can wait one frame. */
+    if (nextWake == nextAnimation)
+      std::this_thread::sleep_until(nextWake);
+    else if (!source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */

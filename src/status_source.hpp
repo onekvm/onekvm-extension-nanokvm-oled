@@ -5,8 +5,11 @@
 
 #include <systemd/sd-bus.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
+#include <poll.h>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -66,11 +69,30 @@ public:
       error = "wait for system bus: not connected";
       return false;
     }
-    const int result =
-        sd_bus_wait(bus_, waitTimeoutUsec(Clock::now(), deadline));
-    if (result < 0 && result != -EINTR)
-      return busError("wait for system bus", result, error);
-    return true;
+    for (;;) {
+      const uint64_t remaining = waitTimeoutUsec(Clock::now(), deadline);
+      if (remaining == 0)
+        return true;
+      const int fd = sd_bus_get_fd(bus_);
+      if (fd < 0)
+        return busError("bus fd", fd, error);
+      const int events = sd_bus_get_events(bus_);
+      if (events < 0)
+        return busError("bus events", events, error);
+      pollfd pfd{};
+      pfd.fd = fd;
+      pfd.events = static_cast<short>(events);
+      const int timeoutMs = static_cast<int>(
+          std::min<uint64_t>((remaining + 999U) / 1000U, 1000U));
+      const int result = ::poll(&pfd, 1, timeoutMs);
+      if (result < 0) {
+        if (errno == EINTR)
+          continue;
+        error = "wait for system bus: " + std::string(std::strerror(errno));
+        return false;
+      }
+      return true;
+    }
   }
 
   bool available() const { return available_; }
