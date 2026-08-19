@@ -690,6 +690,24 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation});
+    if (extensionData != nullptr) {
+      static int tickLog;
+      if (tickLog++ < 12) {
+        auto msLeft = [](Clock::time_point t) {
+          return std::chrono::duration_cast<std::chrono::milliseconds>(
+                     t - Clock::now())
+              .count();
+        };
+        std::ofstream log(std::string(extensionData) + "/tick.log",
+                          std::ios::app);
+        log << "same=" << (nextWake == nextAnimation)
+            << " anim=" << msLeft(nextAnimation)
+            << " play=" << msLeft(nextPlayback)
+            << " cfg=" << msLeft(nextConfig)
+            << " blink=" << msLeft(nextLiveBlink)
+            << " sleep=" << msLeft(nextSleep) << '\n';
+      }
+    }
     if (nextWake == nextAnimation)
       std::this_thread::sleep_until(nextWake);
     else if (!source.waitUntil(nextWake, error))
