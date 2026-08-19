@@ -29,6 +29,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <utility>
+#include <poll.h>
 
 namespace onekvm::oled {
 
@@ -645,17 +646,37 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
-      /* Period is 33 ms including render+show. Spinning another 33 ms
-       * after a ~17 ms apply made the wall period ~50 ms (20 FPS). */
+      /* Period is 33 ms including render+show. Do not sleep another 33 ms
+       * after apply, and do not use D-Bus poll for the remainder: a
+       * readable bus fd would cut the wait, a 20 Hz signal would stretch
+       * it. poll(0, timeout) is a relative millisecond sleep. */
       const auto frameStart = monotonicNow();
       if (!apply(config, status, false))
         return false;
       constexpr auto kAnimationPeriod = 33ms;
       const auto elapsed = monotonicNow() - frameStart;
+      int timeoutMs = 0;
       if (elapsed < kAnimationPeriod) {
-        if (!source.waitUntil(Clock::now() + (kAnimationPeriod - elapsed),
-                              error))
-          return false;
+        timeoutMs = static_cast<int>(std::chrono::duration_cast<
+            std::chrono::milliseconds>(kAnimationPeriod - elapsed)
+                                         .count());
+        if (timeoutMs > 0)
+          (void)::poll(nullptr, 0, timeoutMs);
+      }
+      static int tickSamples = 0;
+      if (tickSamples < 48 && extensionData != nullptr) {
+        static Clock::time_point lastTick;
+        const auto tickNow = monotonicNow();
+        const auto period =
+            tickSamples == 0 ? 0ms : (tickNow - lastTick);
+        lastTick = tickNow;
+        std::ofstream tick(std::filesystem::path(extensionData) / "tick.log",
+                           std::ios::app);
+        tick << "e=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+             << " s=" << timeoutMs
+             << " p=" << std::chrono::duration_cast<std::chrono::milliseconds>(period).count()
+             << '\n';
+        tickSamples++;
       }
       nextAnimation = Clock::now();
     }
