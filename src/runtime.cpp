@@ -635,10 +635,9 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
-      const auto frameStart = Clock::now();
       if (!apply(config, status, false))
         return false;
-      nextAnimation = frameStart + 33ms;
+      nextAnimation += 33ms;
       if (nextAnimation < Clock::now())
         nextAnimation = Clock::now();
     }
@@ -691,15 +690,9 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation});
-    /* Animation sleep must not share sd_bus_wait. Core status is ~20 Hz. */
-    if (nextAnimation != Clock::time_point::max()) {
-      if (Clock::now() < nextAnimation)
-        std::this_thread::sleep_for(
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                nextAnimation - Clock::now()));
-      continue;
-    }
-    if (!source.waitUntil(nextWake, error))
+    if (nextWake == nextAnimation)
+      std::this_thread::sleep_until(nextWake);
+    else if (!source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */
