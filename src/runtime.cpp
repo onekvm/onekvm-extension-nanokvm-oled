@@ -431,6 +431,55 @@ bool hasAnimationLayers(const Config &config) {
                      });
 }
 
+bool blitCachedAnimationFrame(
+    const Config &config, const std::filesystem::path &assetRoot,
+    Clock::time_point epoch,
+    std::unordered_map<std::string, CachedAnimation> &cache, int displayWidth,
+    int displayHeight, int rotation, Canvas &output) {
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           Clock::now() - epoch)
+                           .count();
+  bool painted = false;
+  for (const Element &element : config.layout.elements) {
+    if (element.hidden || element.type != "animation" || element.asset.empty())
+      continue;
+    if (element.x != 0 || element.y != 0 || element.width != displayWidth ||
+        element.height != displayHeight)
+      return false;
+    auto found = cache.find(element.asset);
+    if (found == cache.end()) {
+      CachedAnimation animation;
+      if (!loadAnimation(assetRoot / element.asset, animation)) {
+        cache.emplace(element.asset, CachedAnimation{});
+        return false;
+      }
+      found = cache.emplace(element.asset, std::move(animation)).first;
+    }
+    const CachedAnimation &animation = found->second;
+    if (animation.frames == 0 || animation.fps <= 0 ||
+        animation.width != displayWidth || animation.height != displayHeight)
+      return false;
+    const std::size_t frameBytes =
+        static_cast<std::size_t>(animation.width) * animation.height / 8;
+    const uint64_t frame = static_cast<uint64_t>(std::max<int64_t>(0, elapsed)) *
+                           static_cast<uint64_t>(animation.fps) / 1000U %
+                           animation.frames;
+    const std::size_t offset = static_cast<std::size_t>(frame) * frameBytes;
+    if (offset + frameBytes > animation.data.size())
+      return false;
+    if (!painted)
+      output = Canvas(displayWidth, displayHeight);
+    output.blitPageMajor(
+        0, 0, animation.width, animation.height,
+        std::string_view(reinterpret_cast<const char *>(
+                             animation.data.data() + offset),
+                         frameBytes),
+        rotation);
+    painted = true;
+  }
+  return painted;
+}
+
 bool runDisplay(const Options &options, std::string &error) {
   DisplayProfile profile;
   if (!resolveDisplayProfile(options, profile, error))
@@ -631,7 +680,26 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
-      if (!apply(config, status, false))
+      /* Full-screen OAN already overwrites every GDDRAM byte. Skip the
+       * status/text render so the 33 ms tick stays under one frame. */
+      Canvas animationFrame;
+      if (config.enabled &&
+          blitCachedAnimationFrame(config, animationRoot, animationEpoch,
+                                   animationCache, profile.width,
+                                   profile.height,
+                                   deviceRotation(profile, config.rotation),
+                                   animationFrame)) {
+        if (!awake) {
+          if (!device.initialize(error))
+            return false;
+          displayedFrame = Canvas(profile.width, profile.height);
+          awake = true;
+        }
+        if (!showVisible(animationFrame))
+          return false;
+        lastFrame = animationFrame;
+        lastChange = Clock::now();
+      } else if (!apply(config, status, false))
         return false;
       /* Tick from the scheduled instant so render+I2C does not add extra
        * delay on top of the 33 ms 30 FPS period. */
