@@ -379,27 +379,6 @@ bool loadAnimation(const std::filesystem::path &path, CachedAnimation &output) {
   return fileSize == static_cast<std::streamoff>(header.size() + total);
 }
 
-std::string animationPixels(std::span<const unsigned char> frame, int width,
-                             int height) {
-  std::string pixels(static_cast<std::size_t>(width) * height / 4, '0');
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      if ((frame[static_cast<std::size_t>((y >> 3) * width + x)] &
-           (1U << (y & 7))) == 0)
-        continue;
-      const std::size_t index = static_cast<std::size_t>(y * width + x);
-      const std::size_t nibble = index / 4;
-      const int shift = 3 - static_cast<int>(index % 4);
-      const int value = (pixels[nibble] >= 'A' ? pixels[nibble] - 'A' + 10
-                                               : pixels[nibble] - '0') |
-                        (1 << shift);
-      pixels[nibble] = static_cast<char>(value < 10 ? '0' + value
-                                                    : 'A' + value - 10);
-    }
-  }
-  return pixels;
-}
-
 void updateAnimationLayers(
     Config &config, const std::filesystem::path &assetRoot,
     Clock::time_point epoch,
@@ -441,9 +420,9 @@ void updateAnimationLayers(
     }
     element.width = animation.width;
     element.height = animation.height;
-    element.pixels = animationPixels(
-        std::span<const unsigned char>(animation.frame.data(), frameBytes),
-        animation.width, animation.height);
+    element.pixels.assign(
+        reinterpret_cast<const char *>(animation.frame.data()),
+        reinterpret_cast<const char *>(animation.frame.data()) + frameBytes);
   }
 }
 

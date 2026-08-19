@@ -139,7 +139,16 @@ Canvas render(const Config &config, const Status &status,
                     config.rotation, !element.filled, regionX, regionWidth,
                     regionY, regionHeight);
       }
-    } else if (element.type == "animation" || element.mode == "custom")
+    } else if (element.type == "animation") {
+      const std::size_t rawBytes = static_cast<std::size_t>(element.width) *
+                                   static_cast<std::size_t>(element.height) / 8;
+      if (element.pixels.size() == rawBytes)
+        canvas.blitPageMajor(element.x, element.y, element.width,
+                             element.height, element.pixels, config.rotation);
+      else
+        canvas.graphic(element.x, element.y, element.width, element.height,
+                       element.pixels, config.rotation);
+    } else if (element.mode == "custom")
       canvas.graphic(element.x, element.y, element.width, element.height,
                      element.pixels, config.rotation);
     else if (element.mode == "live") {

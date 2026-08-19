@@ -152,6 +152,40 @@ public:
       }
   }
 
+  void blitPageMajor(int x, int y, int width, int height,
+                     std::string_view bytes, int rotation) {
+    const std::size_t frameBytes =
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) / 8;
+    if (bytes.size() != frameBytes || width <= 0 || height <= 0 ||
+        height % 8 != 0)
+      return;
+    if (rotation == 0 && y % 8 == 0) {
+      const int pages = height / 8;
+      for (int page = 0; page < pages; ++page) {
+        const int targetPage = y / 8 + page;
+        if (targetPage < 0 || targetPage >= height_ / 8)
+          continue;
+        for (int column = 0; column < width; ++column) {
+          const int targetX = x + column;
+          if (targetX < 0 || targetX >= width_)
+            continue;
+          data_[static_cast<std::size_t>(targetPage * width_ + targetX)] =
+              static_cast<uint8_t>(
+                  bytes[static_cast<std::size_t>(page * width + column)]);
+        }
+      }
+      return;
+    }
+    for (int row = 0; row < height; ++row) {
+      for (int column = 0; column < width; ++column) {
+        if ((bytes[static_cast<std::size_t>((row >> 3) * width + column)] &
+             (1U << (row & 7))) == 0)
+          continue;
+        setRotated(x + column, y + row, rotation, true);
+      }
+    }
+  }
+
   void graphic(int x, int y, int width, int height, std::string_view pixels,
                int rotation, bool on = true) {
     for (int row = 0; row < height; ++row)
