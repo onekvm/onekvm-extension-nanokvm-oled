@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -54,6 +55,15 @@ struct Status {
   std::string hostname;
   std::string ip;
   int64_t uptime = 0;
+  std::string machine;
+  std::string version;
+  std::string processor;
+  std::string kernel;
+  int cpuPercent = -1;
+  uint64_t memoryUsed = 0;
+  uint64_t memoryTotal = 0;
+  uint64_t storageTotal = 0;
+  uint64_t storageAvailable = 0;
 };
 
 struct Element {
@@ -92,6 +102,7 @@ struct Config {
   int rotation = 0;
   int sleepSeconds = 0;
   Layout layout;
+  std::map<std::string, std::string> variables;
 };
 
 } // namespace onekvm::oled

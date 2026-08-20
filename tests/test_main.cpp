@@ -7,6 +7,7 @@
 #include <cassert>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <unistd.h>
 
 using namespace onekvm::oled;
@@ -355,5 +356,30 @@ int main() {
   assert(expandTemplate("{ip} {codec} {fps} {stream} {uptime}", decoded) ==
 	         "192.0.2.5 H264 47 STREAM ACTIVE 1H02M");
   assert(expandTemplate("{resolution}", decoded) == "1920x1080");
+  decoded.cpuPercent = 12;
+  decoded.memoryUsed = 18ull * 1024 * 1024;
+  decoded.memoryTotal = 32ull * 1024 * 1024;
+  decoded.storageAvailable = 8ull * 1024 * 1024 * 1024;
+  decoded.storageTotal = 16ull * 1024 * 1024 * 1024;
+  assert(expandTemplate("{cpu} {mem} {disk}", decoded) == "12% 18M/32M 8G/16G");
+  std::map<std::string, std::string> variables{{"c_room", "A1"}};
+  assert(expandTemplate("{c_room} {ip}", decoded, variables) == "A1 192.0.2.5");
+
+  {
+    std::ofstream output(path);
+    output << R"({"display_enabled":true,"burn_in_protection":true,"rotation":0,"sleep_seconds":300,"layout_json":"","variables_json":"{\"c_room\":\"lab\"}"})";
+  }
+  Config withVariables;
+  error.clear();
+  assert(loadConfig(path, withVariables, raw, error, 128, 64));
+  assert(withVariables.variables["c_room"] == "lab");
+  {
+    std::ofstream output(path);
+    output << R"({"display_enabled":true,"burn_in_protection":true,"rotation":0,"sleep_seconds":300,"layout_json":"","variables_json":"{\"room\":\"lab\"}"})";
+  }
+  error.clear();
+  assert(!loadConfig(path, withVariables, raw, error, 128, 64));
+  assert(error.find("c_") != std::string::npos);
+  ::unlink(path.c_str());
   return 0;
 }

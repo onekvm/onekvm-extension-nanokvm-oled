@@ -157,6 +157,11 @@ button { color: inherit; }
 .option > label { color: #aab3af; font-size: 12px; }
 .burn-in-card { display: flex; align-items: center; justify-content: space-between; min-height: 78px; gap: 18px; padding: 14px; }
 .burn-in-card strong { font-size: 13px; }
+.variables-card { grid-column: 1 / -1; display: grid; gap: 10px; padding: 14px; }
+.variables-card strong { font-size: 13px; }
+.variables-list { display: grid; gap: 8px; }
+.variable-row { display: grid; grid-template-columns: minmax(7rem, 10rem) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.variable-row input { min-height: 32px; padding: 4px 8px; border: 1px solid #3a4440; border-radius: 6px; color: inherit; background: transparent; }
 
 select, input[type="text"], input[type="number"], .field input {
   width: 100%;

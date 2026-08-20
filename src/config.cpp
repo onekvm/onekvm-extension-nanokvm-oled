@@ -3,6 +3,7 @@
 #include "json.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
@@ -535,6 +536,56 @@ bool loadDisplayProfile(const std::string &profilePath,
   return displayProfileForVariant(variant, hardwareRevision, output, error);
 }
 
+bool validCustomVariableKey(std::string_view key) {
+  if (key.size() < 3 || key.size() > 32)
+    return false;
+  if (key[0] != 'c' || key[1] != '_')
+    return false;
+  for (std::size_t index = 2; index < key.size(); ++index) {
+    const unsigned char current = static_cast<unsigned char>(key[index]);
+    if (!std::isalnum(current) && current != '_')
+      return false;
+  }
+  return true;
+}
+
+bool parseVariables(const Json &settings,
+                    std::map<std::string, std::string> &output,
+                    std::string &error) {
+  output.clear();
+  std::string raw;
+  if (!jsonString(settings, "variables_json", "{}", raw, error))
+    return false;
+  if (raw.empty())
+    return true;
+  Json document;
+  if (!parseJSON(raw, document, error) || document.type != Json::Type::Object) {
+    if (error.empty())
+      error = "OLED variables must be a JSON object";
+    return false;
+  }
+  if (document.object.size() > 32) {
+    error = "OLED allows at most 32 custom variables";
+    return false;
+  }
+  for (const auto &[key, value] : document.object) {
+    if (!validCustomVariableKey(key)) {
+      error = "OLED custom variable keys must start with c_";
+      return false;
+    }
+    if (value.type != Json::Type::String) {
+      error = "OLED custom variable " + key + " must be a string";
+      return false;
+    }
+    if (value.string.size() > 64) {
+      error = "OLED custom variable " + key + " is too long";
+      return false;
+    }
+    output[key] = value.string;
+  }
+  return true;
+}
+
 bool loadConfig(const std::string &path, Config &output, std::string &raw,
                 std::string &error, int displayWidth,
                 int displayHeight) {
@@ -549,9 +600,10 @@ bool loadConfig(const std::string &path, Config &output, std::string &raw,
   const std::set<std::string> allowed = {
       "display_enabled", "burn_in_protection",
       "rotation",        "sleep_seconds",
-      "layout_json",     "brightness",
-      "line1",           "line2",
-      "line3",           "line4",
+      "layout_json",     "variables_json",
+      "brightness",      "line1",
+      "line2",           "line3",
+      "line4",
   };
   for (const auto &[key, value] : settings.object) {
     (void)value;
@@ -593,6 +645,8 @@ bool loadConfig(const std::string &path, Config &output, std::string &raw,
       return false;
   }
   const bool useDeviceDefault = !hasLegacyLines;
+  if (!parseVariables(settings, output.variables, error))
+    return false;
   return parseLayout(layoutJSON, lines, output.rotation, output.layout, error,
                      displayWidth, displayHeight, useDeviceDefault);
 }

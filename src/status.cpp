@@ -47,6 +47,30 @@ bool decodeStatus(std::string_view payload, Status &status,
         !jsonBool(*hid, "connected", false, status.hidConnected, error))
       return false;
   }
+  jsonString(root, "machine", {}, status.machine, error);
+  jsonString(root, "version", {}, status.version, error);
+  error.clear();
+  if (const Json *system = root.get("system");
+      system != nullptr && system->type == Json::Type::Object) {
+    jsonString(*system, "processor", {}, status.processor, error);
+    jsonString(*system, "kernel_version", {}, status.kernel, error);
+    error.clear();
+    if (const Json *cpu = system->get("cpu_percent");
+        cpu != nullptr && cpu->type == Json::Type::Number)
+      status.cpuPercent = static_cast<int>(cpu->number + (cpu->number < 0 ? -0.5 : 0.5));
+    if (const Json *used = system->get("memory_used_bytes");
+        used != nullptr && used->type == Json::Type::Number && used->number >= 0)
+      status.memoryUsed = static_cast<uint64_t>(used->number);
+    if (const Json *total = system->get("memory_total_bytes");
+        total != nullptr && total->type == Json::Type::Number && total->number >= 0)
+      status.memoryTotal = static_cast<uint64_t>(total->number);
+    if (const Json *disk = system->get("storage_total_bytes");
+        disk != nullptr && disk->type == Json::Type::Number && disk->number >= 0)
+      status.storageTotal = static_cast<uint64_t>(disk->number);
+    if (const Json *free = system->get("storage_available_bytes");
+        free != nullptr && free->type == Json::Type::Number && free->number >= 0)
+      status.storageAvailable = static_cast<uint64_t>(free->number);
+  }
   return true;
 }
 

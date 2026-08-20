@@ -60,6 +60,7 @@
       "rotation": {"type": "integer", "title": "Viewing direction", "default": 0, "minimum": 0, "maximum": 270, "i18n": {"default": "Viewing direction", "zh": "观看方向", "zh-TW": "觀看方向"}},
       "sleep_seconds": {"type": "integer", "title": "Automatic screen-off", "default": 3600, "minimum": 0, "maximum": 86400, "i18n": {"default": "Automatic screen-off", "zh": "自动熄屏", "zh-TW": "自動熄屏"}},
       "layout_json": {"type": "string", "title": "Canvas layout", "default": "", "maxLength": 4096, "i18n": {"default": "Canvas layout", "zh": "画布布局", "zh-TW": "畫布配置"}},
+      "variables_json": {"type": "string", "title": "Custom variables", "default": "{}", "maxLength": 2048, "i18n": {"default": "Custom variables", "zh": "自定义变量", "zh-TW": "自訂變數"}},
       "brightness": {"type": "integer", "title": "Legacy brightness", "minimum": 1, "maximum": 100, "readOnly": true, "i18n": {"default": "Legacy brightness", "zh": "旧版亮度", "zh-TW": "舊版亮度"}},
       "line1": {"type": "string", "title": "Legacy line 1", "maxLength": 64, "readOnly": true, "i18n": {"default": "Legacy line 1", "zh": "旧版第 1 行", "zh-TW": "舊版第 1 行"}},
       "line2": {"type": "string", "title": "Legacy line 2", "maxLength": 64, "readOnly": true, "i18n": {"default": "Legacy line 2", "zh": "旧版第 2 行", "zh-TW": "舊版第 2 行"}},

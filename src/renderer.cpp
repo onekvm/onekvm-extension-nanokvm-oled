@@ -1,6 +1,8 @@
 #include "renderer.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <map>
 #include <string>
 
 namespace onekvm::oled {
@@ -40,7 +42,18 @@ std::string upperASCII(std::string value) {
   return value;
 }
 
-std::string expandTemplate(std::string value, const Status &status) {
+std::string formatBytes(uint64_t bytes) {
+  if (bytes >= 1024ull * 1024 * 1024)
+    return std::to_string(bytes / (1024ull * 1024 * 1024)) + "G";
+  if (bytes >= 1024ull * 1024)
+    return std::to_string(bytes / (1024ull * 1024)) + "M";
+  if (bytes >= 1024)
+    return std::to_string(bytes / 1024) + "K";
+  return std::to_string(bytes) + "B";
+}
+
+std::string expandTemplate(std::string value, const Status &status,
+                           const std::map<std::string, std::string> &variables) {
   replaceAll(value, "{ip}", status.ip.empty() ? "--" : status.ip);
   replaceAll(value, "{hostname}",
              status.hostname.empty() ? "--" : status.hostname);
@@ -61,6 +74,44 @@ std::string expandTemplate(std::string value, const Status &status) {
                                  (minutes % 60 < 10 ? "0" : "") +
                                  std::to_string(minutes % 60) + "M"
                            : std::to_string(minutes) + "M");
+  replaceAll(value, "{cpu}",
+             status.cpuPercent < 0 ? "--"
+                                   : std::to_string(status.cpuPercent) + "%");
+  replaceAll(value, "{mem_used}",
+             status.memoryUsed == 0 && status.memoryTotal == 0
+                 ? "--"
+                 : formatBytes(status.memoryUsed));
+  replaceAll(value, "{mem_total}",
+             status.memoryTotal == 0 ? "--" : formatBytes(status.memoryTotal));
+  replaceAll(value, "{mem}",
+             status.memoryTotal == 0
+                 ? "--"
+                 : formatBytes(status.memoryUsed) + "/" +
+                       formatBytes(status.memoryTotal));
+  replaceAll(value, "{disk_free}",
+             status.storageAvailable == 0 && status.storageTotal == 0
+                 ? "--"
+                 : formatBytes(status.storageAvailable));
+  replaceAll(value, "{disk_total}",
+             status.storageTotal == 0 ? "--"
+                                      : formatBytes(status.storageTotal));
+  replaceAll(value, "{disk}",
+             status.storageTotal == 0
+                 ? "--"
+                 : formatBytes(status.storageTotal - status.storageAvailable) +
+                       "/" + formatBytes(status.storageTotal));
+  replaceAll(value, "{processor}",
+             status.processor.empty() ? "--" : status.processor);
+  replaceAll(value, "{kernel}", status.kernel.empty() ? "--" : status.kernel);
+  replaceAll(value, "{version}",
+             status.version.empty() ? "--" : status.version);
+  replaceAll(value, "{machine}",
+             status.machine.empty() ? "--" : status.machine);
+  for (const auto &[key, custom] : variables) {
+    if (key.size() < 3 || key[0] != 'c' || key[1] != '_')
+      continue;
+    replaceAll(value, "{" + key + "}", custom.empty() ? "--" : custom);
+  }
   return value;
 }
 
@@ -95,7 +146,8 @@ Canvas render(const Config &config, const Status &status,
     if (element.hidden)
       continue;
     if (element.type == "text") {
-      const std::string content = expandTemplate(element.text, status);
+      const std::string content =
+          expandTemplate(element.text, status, config.variables);
       const int regionX = element.fullWidth ? 0 : element.x;
       const int regionWidth = element.fullWidth
                                   ? logicalWidth
@@ -120,7 +172,8 @@ Canvas render(const Config &config, const Status &status,
       canvas.rectangle(element.x, element.y, element.width, element.height,
                        element.filled, config.rotation);
       if (!element.text.empty() && element.width > 2 && element.height > 2) {
-        const std::string content = expandTemplate(element.text, status);
+        const std::string content =
+          expandTemplate(element.text, status, config.variables);
         const int contentWidth =
             textPixelWidth(content, element.scale, element.fontWidth);
         const int contentHeight = textPixelHeight(content, element.scale);
@@ -153,7 +206,8 @@ Canvas render(const Config &config, const Status &status,
                      element.pixels, config.rotation);
     else if (element.mode == "live") {
       constexpr int liveHeight = 7;
-      const std::string content = expandTemplate(element.text, status);
+      const std::string content =
+          expandTemplate(element.text, status, config.variables);
       const int liveWidth =
           7 + textPixelWidth(content, 1, element.fontWidth);
       const int renderWidth =
@@ -178,7 +232,8 @@ Canvas render(const Config &config, const Status &status,
                          config.rotation, false);
     } else {
       const bool connected = statusConnected(element.mode, status);
-      const std::string content = expandTemplate(element.text, status);
+      const std::string content =
+          expandTemplate(element.text, status, config.variables);
       const int contentWidth = element.content == "custom"
                                    ? element.width
                                    : textPixelWidth(content, element.scale,

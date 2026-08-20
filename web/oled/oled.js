@@ -15,6 +15,7 @@ export function mountOLEDDesigner(root, host) {
     rotation: 0,
     sleep_seconds: 3600,
     layout_json: '',
+    variables_json: '{}',
   }
   let language = resolveLocale([host.locale, detectLocale()])
   let text = messagesFor(language)
@@ -377,6 +378,7 @@ export function mountOLEDDesigner(root, host) {
       layout.elements.filter((item) => item.type === 'animation' && item.asset).forEach((item) => { void loadAnimationData(item.asset) })
     }
     syncGlobalForm()
+    syncVariablesForm()
     syncEditor()
   }
 
@@ -1240,8 +1242,141 @@ export function mountOLEDDesigner(root, host) {
         : (status?.video?.resolution ? `${status.video.resolution}P` : 'AUTO'),
       stream: status?.video?.active ? 'STREAM ACTIVE' : 'KVM READY',
       uptime: compactDuration(status?.uptime_seconds || 0),
+      cpu: status?.system?.cpu_percent == null ? '--' : `${Math.round(status.system.cpu_percent)}%`,
+      mem: compactMemory(status?.system?.memory_used_bytes, status?.system?.memory_total_bytes),
+      disk: compactMemory(
+        (status?.system?.storage_total_bytes || 0) - (status?.system?.storage_available_bytes || 0),
+        status?.system?.storage_total_bytes,
+      ),
     }
-    return String(value || '').replace(/\{(ip|hostname|codec|fps|resolution|stream|uptime)\}/g, (_, key) => values[key])
+    let output = String(value || '').replace(
+      /\{(ip|hostname|codec|fps|resolution|stream|uptime|cpu|mem|disk)\}/g,
+      (_, key) => values[key],
+    )
+    const custom = parseVariables(settings.variables_json)
+    Object.keys(custom).forEach((key) => {
+      output = output.split(`{${key}}`).join(custom[key] || '--')
+    })
+    return output
+  }
+
+  function compactMemory(used, total) {
+    if (!total) return '--'
+    return `${formatBytes(used || 0)}/${formatBytes(total)}`
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes) || 0
+    if (value >= 1024 * 1024 * 1024) return `${Math.floor(value / (1024 * 1024 * 1024))}G`
+    if (value >= 1024 * 1024) return `${Math.floor(value / (1024 * 1024))}M`
+    if (value >= 1024) return `${Math.floor(value / 1024)}K`
+    return `${value}B`
+  }
+
+  function parseVariables(raw) {
+    try {
+      const parsed = JSON.parse(raw || '{}')
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+      const output = {}
+      Object.keys(parsed).forEach((key) => {
+        if (!/^c_[A-Za-z0-9_]{1,30}$/.test(key)) return
+        if (typeof parsed[key] !== 'string') return
+        output[key] = parsed[key].slice(0, 64)
+      })
+      return output
+    } catch {
+      return {}
+    }
+  }
+
+  function serializeVariables(values) {
+    const output = {}
+    Object.keys(values || {}).forEach((key) => {
+      if (!/^c_[A-Za-z0-9_]{1,30}$/.test(key)) return
+      output[key] = String(values[key] || '').slice(0, 64)
+    })
+    return JSON.stringify(output)
+  }
+
+  function normalizeVariableKey(raw) {
+    const trimmed = String(raw || '').trim()
+    const withPrefix = trimmed.startsWith('c_') ? trimmed : `c_${trimmed}`
+    return withPrefix.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 32)
+  }
+
+  function syncVariablesForm() {
+    const list = element('variables-list')
+    if (!list) return
+    const values = parseVariables(settings.variables_json)
+    const keys = Object.keys(values)
+    list.replaceChildren()
+    keys.forEach((key) => {
+      const row = document.createElement('div')
+      row.className = 'variable-row'
+      const keyInput = document.createElement('input')
+      keyInput.value = key
+      keyInput.maxLength = 32
+      keyInput.setAttribute('aria-label', text.variableKey || 'Key')
+      const valueInput = document.createElement('input')
+      valueInput.value = values[key]
+      valueInput.maxLength = 64
+      valueInput.setAttribute('aria-label', text.variableValue || 'Value')
+      const remove = document.createElement('button')
+      remove.type = 'button'
+      remove.textContent = text.variableRemove || 'Remove'
+      keyInput.addEventListener('change', () => {
+        const nextKey = normalizeVariableKey(keyInput.value)
+        if (!/^c_[A-Za-z0-9_]{1,30}$/.test(nextKey)) return
+        const next = parseVariables(settings.variables_json)
+        const current = next[key]
+        delete next[key]
+        next[nextKey] = current
+        settings.variables_json = serializeVariables(next)
+        syncVariablesForm()
+        syncCustomTokens()
+        notifySettingsState()
+        render()
+      })
+      valueInput.addEventListener('input', () => {
+        const next = parseVariables(settings.variables_json)
+        next[key] = valueInput.value.slice(0, 64)
+        settings.variables_json = serializeVariables(next)
+        notifySettingsState()
+        render()
+      })
+      remove.addEventListener('click', () => {
+        const next = parseVariables(settings.variables_json)
+        delete next[key]
+        settings.variables_json = serializeVariables(next)
+        syncVariablesForm()
+        syncCustomTokens()
+        notifySettingsState()
+        render()
+      })
+      row.append(keyInput, valueInput, remove)
+      list.append(row)
+    })
+    syncCustomTokens()
+  }
+
+  function syncCustomTokens() {
+    const host = element('custom-tokens')
+    if (!host) return
+    host.replaceChildren()
+    Object.keys(parseVariables(settings.variables_json)).forEach((key) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.dataset.token = `{${key}}`
+      button.textContent = `{${key}}`
+      button.addEventListener('click', () => {
+        const item = selectedElement()
+        if (!item || item.type !== 'text') return
+        item.text = `${item.text}${button.dataset.token}`.slice(0, 128)
+        syncEditor()
+        element('element-content').focus()
+      })
+      host.append(button)
+    })
   }
 
   function compactDuration(seconds) {
@@ -1792,6 +1927,7 @@ export function mountOLEDDesigner(root, host) {
       rotation: settings.rotation,
       sleep_seconds: settings.sleep_seconds,
       layout_json: serializeLayout(),
+      variables_json: serializeVariables(parseVariables(settings.variables_json)),
     }
   }
 
@@ -2227,6 +2363,19 @@ export function mountOLEDDesigner(root, host) {
     element('display-enabled').addEventListener('change', () => { collectGlobalForm(); render() })
     element('sleep').addEventListener('change', () => { collectGlobalForm(); notifySettingsState() })
     element('burn-in').addEventListener('change', () => { collectGlobalForm(); notifySettingsState() })
+    element('variable-add')?.addEventListener('click', () => {
+      const next = parseVariables(settings.variables_json)
+      let index = 1
+      let key = 'c_var'
+      while (next[key]) {
+        index += 1
+        key = `c_var${index}`
+      }
+      next[key] = ''
+      settings.variables_json = serializeVariables(next)
+      syncVariablesForm()
+      notifySettingsState()
+    })
     element('delete-element').addEventListener('click', deleteSelected)
     element('copy-element').addEventListener('click', copySelected)
     element('paste-element').addEventListener('click', pasteCopied)
