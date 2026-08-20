@@ -91,26 +91,35 @@ export function mountOLEDDesigner(root, host) {
   function drawOLEDFrames(canvas, asset, bytes, full) {
     const context = canvas.getContext('2d')
     if (!context) return
+    const parsed = full ? parseOanBytes(bytes) : null
     const frameBytes = asset.width * asset.height / 8
-    const required = (full ? 14 : 0) + (full ? asset.frames : 1) * frameBytes
-    if (bytes.length < required) return
-    let frame = 0
+    if (!parsed && bytes.length < frameBytes) return
     const image = context.createImageData(asset.width, asset.height)
+    const started = performance.now()
     const draw = () => {
-      const offset = full ? 14 + frame * frameBytes : 0
-      for (let y = 0; y < asset.height; y += 1) for (let x = 0; x < asset.width; x += 1) {
-        const on = (bytes[offset + (y >> 3) * asset.width + x] & (1 << (y & 7))) !== 0
-        const pixel = (y * asset.width + x) * 4
+      let source = bytes
+      let offset = 0
+      let width = asset.width
+      let height = asset.height
+      if (parsed) {
+        const step = oanStepAt(parsed, performance.now() - started)
+        source = parsed.pixels
+        offset = step.offset
+        width = parsed.width
+        height = parsed.height
+      }
+      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+        const on = (source[offset + (y >> 3) * width + x] & (1 << (y & 7))) !== 0
+        const pixel = (y * width + x) * 4
         image.data[pixel] = on ? 228 : 0
         image.data[pixel + 1] = on ? 255 : 5
         image.data[pixel + 2] = on ? 238 : 7
         image.data[pixel + 3] = 255
       }
       context.putImageData(image, 0, 0)
-      if (full) frame = (frame + 1) % asset.frames
     }
     draw()
-    if (full && asset.frames > 1) mediaTimers.push(setInterval(draw, Math.max(1, Math.round(1000 / asset.fps))))
+    if (parsed && parsed.steps.length > 1) mediaTimers.push(setInterval(draw, 33))
   }
 
   async function renderMediaCards(assets, library, showEmpty) {
@@ -153,12 +162,11 @@ export function mountOLEDDesigner(root, host) {
     return `${window.location.origin}/api/plugins/${encodeURIComponent(extension.id)}/assets${path}`
   }
 
-  function animationFramePixels(data, frame, width, height) {
+  function animationFramePixels(buffer, offset, width, height) {
     const frameBytes = width * height / 8
-    const offset = 14 + frame * frameBytes
     let pixels = normalizePixels('', width, height)
     for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-      if ((data[offset + (y >> 3) * width + x] & (1 << (y & 7))) === 0) continue
+      if ((buffer[offset + (y >> 3) * width + x] & (1 << (y & 7))) === 0) continue
       const index = y * width + x
       const nibble = Math.floor(index / 4)
       const value = Number.parseInt(pixels[nibble], 16) | (1 << (3 - index % 4))
@@ -167,15 +175,109 @@ export function mountOLEDDesigner(root, host) {
     return pixels
   }
 
+  function parseOanBytes(data) {
+    if (data.length < 14) return null
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+    if (view.getUint8(0) !== 0x4f || view.getUint8(1) !== 0x41 || view.getUint8(2) !== 0x4e) return null
+    const version2 = view.getUint8(3) === 0x32
+    if (!version2 && view.getUint8(3) !== 0x31) return null
+    const width = view.getUint16(4, true)
+    const height = view.getUint16(6, true)
+    const fps = view.getUint16(8, true)
+    const events = view.getUint32(10, true)
+    const frameBytes = width * height / 8
+    if (!width || !height || height % 8 || !events) return null
+    if (!version2) {
+      if (!fps || data.length !== 14 + events * frameBytes) return null
+      const period = Math.max(1, Math.floor(1000 / fps))
+      const steps = []
+      for (let i = 0; i < events; i += 1) steps.push({ delayMs: period, offset: i * frameBytes })
+      return { width, height, fps, frames: events, durationMs: period * events, loopIndex: 0xffffffff, steps, pixels: data.slice(14), frameBytes }
+    }
+    try {
+      const program = []
+      let offset = 14
+      let stored = 0
+      for (let i = 0; i < events; i += 1) {
+        const op = data[offset]; offset += 1
+        if (op === 1) {
+          const delayMs = view.getUint16(offset, true); offset += 2
+          program.push({ op, delayMs, arg: 0, src: offset }); offset += frameBytes; stored += 1
+        } else if (op === 2) {
+          program.push({ op, delayMs: view.getUint16(offset, true), arg: 0 }); offset += 2
+        } else if (op === 3 || op === 4) {
+          const arg = view.getUint16(offset, true); const delayMs = view.getUint16(offset + 2, true); offset += 4
+          program.push({ op, delayMs, arg })
+        } else if (op === 5) {
+          const arg = view.getUint16(offset, true); offset += 2
+          if (arg === i || arg >= events) return null
+          program.push({ op, delayMs: 0, arg })
+        } else return null
+      }
+      if (offset !== data.length || stored < 1) return null
+      const buf = new Uint8Array(frameBytes)
+      const snapshots = []
+      const steps = []
+      let have = false
+      let last = -1
+      const invertX = (x) => { for (let page = 0; page < height / 8; page += 1) buf[page * width + x] ^= 0xff }
+      const invertY = (y) => { const bit = 1 << (y & 7); const page = y >> 3; for (let x = 0; x < width; x += 1) buf[page * width + x] ^= bit }
+      const push = (delayMs) => {
+        if (!have) return
+        const same = last >= 0 && snapshots[last].every((value, index) => value === buf[index])
+        if (!same) { last = snapshots.length; snapshots.push(Uint8Array.from(buf)) }
+        steps.push({ delayMs, offset: last * frameBytes })
+      }
+      let pc = 0; let takenBack = false; let loopEvent = -1; let loopIndex = 0xffffffff; let guard = 0
+      while (pc < program.length && guard++ < 131072) {
+        const event = program[pc]
+        if (event.op === 5) {
+          if (event.arg > pc) { pc = event.arg; continue }
+          if (!takenBack) { takenBack = true; loopEvent = pc; loopIndex = steps.length; pc = event.arg; continue }
+          if (pc === loopEvent) break
+          pc = event.arg; continue
+        }
+        if (event.op === 1) { buf.set(data.subarray(event.src, event.src + frameBytes)); have = true; push(event.delayMs) }
+        else if (event.op === 2) push(event.delayMs)
+        else if (event.op === 3) { invertX(event.arg); push(event.delayMs) }
+        else if (event.op === 4) { invertY(event.arg); push(event.delayMs) }
+        pc += 1
+      }
+      if (!steps.length) return null
+      const pixels = new Uint8Array(snapshots.length * frameBytes)
+      snapshots.forEach((snapshot, index) => pixels.set(snapshot, index * frameBytes))
+      return { width, height, fps, frames: snapshots.length, durationMs: steps.reduce((sum, step) => sum + step.delayMs, 0), loopIndex, steps, pixels, frameBytes }
+    } catch (_) { return null }
+  }
+
+  function oanStepAt(value, elapsedMs) {
+    if (!value?.steps?.length) return null
+    const { steps, durationMs, loopIndex } = value
+    let cursor = elapsedMs
+    let start = 0
+    if (loopIndex !== 0xffffffff && loopIndex < steps.length) {
+      const prefixMs = steps.slice(0, loopIndex).reduce((sum, step) => sum + step.delayMs, 0)
+      const cycleMs = steps.slice(loopIndex).reduce((sum, step) => sum + step.delayMs, 0)
+      if (elapsedMs < prefixMs) { cursor = elapsedMs; start = 0 }
+      else if (!cycleMs) return steps[steps.length - 1]
+      else { cursor = (elapsedMs - prefixMs) % cycleMs; start = loopIndex }
+    } else if (durationMs && elapsedMs >= durationMs) return steps[steps.length - 1]
+    let remaining = cursor
+    for (let i = start; i < steps.length; i += 1) {
+      if (remaining < steps[i].delayMs) return steps[i]
+      remaining -= steps[i].delayMs
+    }
+    return steps[steps.length - 1]
+  }
+
   async function loadAnimationData(name) {
     if (!name || animationData.has(name)) return animationData.get(name)
     try {
       const response = await globalThis['f' + 'etch'](mediaRoute(`/${encodeURIComponent(name)}`), { credentials: 'include' })
       if (!response.ok) return null
       const data = new Uint8Array(await response.arrayBuffer())
-      const view = new DataView(data.buffer)
-      if (data.length < 14 || view.getUint8(0) !== 0x4f || view.getUint8(1) !== 0x41 || view.getUint8(2) !== 0x4e || view.getUint8(3) !== 0x31) return null
-      const value = { data, width: view.getUint16(4, true), height: view.getUint16(6, true), fps: view.getUint16(8, true), frames: view.getUint32(10, true) }
+      const value = parseOanBytes(data)
+      if (!value) return null
       animationData.set(name, value)
       return value
     } catch (_) { return null }
@@ -187,9 +289,10 @@ export function mountOLEDDesigner(root, host) {
     for (const item of layout.elements) {
       if (item.type !== 'animation' || !item.asset) continue
       const value = animationData.get(item.asset)
-      if (!value || !value.frames || !value.fps) continue
-      const frame = Math.floor(elapsed * value.fps / 1000) % value.frames
-      const pixels = animationFramePixels(value.data, frame, value.width, value.height)
+      if (!value || !value.steps?.length) continue
+      const step = oanStepAt(value, elapsed)
+      if (!step) continue
+      const pixels = animationFramePixels(value.pixels, step.offset, value.width, value.height)
       if (item.pixels !== pixels || item.width !== value.width || item.height !== value.height) {
         item.width = value.width; item.height = value.height; item.pixels = pixels; changed = true
       }
@@ -241,21 +344,49 @@ export function mountOLEDDesigner(root, host) {
     if (mediaObjectURL) URL.revokeObjectURL(mediaObjectURL); mediaObjectURL = URL.createObjectURL(file); decoder.src = mediaObjectURL; await new Promise((resolve, reject) => { decoder.onloadedmetadata = resolve; decoder.onerror = () => reject(decoder.error || new Error('Video cannot be decoded')) })
     const duration = Number.isFinite(decoder.duration) ? decoder.duration : 0; if (!duration) throw new Error('Video has no duration'); mediaAspectRatio = decoder.videoWidth / decoder.videoHeight
     if (resolution === 'custom' && mediaRatioLocked) { height = Math.max(8, Math.round((width / mediaAspectRatio) / 8) * 8); if (height > 256) throw new Error('Invalid OLED resolution'); element('media-height').value = String(height) }
-    const frameCount = Math.max(1, Math.floor(duration * fps)); const outputSize = 14 + frameCount * width * height / 8; if (outputSize > 32 * 1024 * 1024) throw new Error(text.assetTooLarge); frameCanvas.width = width; frameCanvas.height = height; progress.classList.remove('hidden'); progress.value = 0; button.disabled = true
-    const output = new Uint8Array(14 + frameCount * width * height / 8); const header = new DataView(output.buffer); header.setUint8(0, 0x4f); header.setUint8(1, 0x41); header.setUint8(2, 0x4e); header.setUint8(3, 0x31); header.setUint16(4, width, true); header.setUint16(6, height, true); header.setUint16(8, fps, true); header.setUint32(10, frameCount, true)
+    const frameCount = Math.max(1, Math.floor(duration * fps)); const frameBytes = width * height / 8; if (14 + frameCount * frameBytes > 32 * 1024 * 1024) throw new Error(text.assetTooLarge); frameCanvas.width = width; frameCanvas.height = height; progress.classList.remove('hidden'); progress.value = 0; button.disabled = true
+    const sampled = []
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
       await mediaSeek(decoder, Math.min(duration - 0.001, frameIndex / fps)); context.fillStyle = '#000'; context.fillRect(0, 0, width, height)
       const scale = fit === 'cover' ? Math.max(width / decoder.videoWidth, height / decoder.videoHeight) : Math.min(width / decoder.videoWidth, height / decoder.videoHeight)
       const drawWidth = decoder.videoWidth * scale; const drawHeight = decoder.videoHeight * scale
       context.drawImage(decoder, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight)
-      const pixels = context.getImageData(0, 0, width, height).data; const offset = 14 + frameIndex * width * height / 8
-      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) { const pixel = (y * width + x) * 4; if (pixels[pixel] * 0.2126 + pixels[pixel + 1] * 0.7152 + pixels[pixel + 2] * 0.0722 >= 128) output[offset + (y >> 3) * width + x] |= 1 << (y & 7) }
+      const pixels = context.getImageData(0, 0, width, height).data
+      const packed = new Uint8Array(frameBytes)
+      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) { const pixel = (y * width + x) * 4; if (pixels[pixel] * 0.2126 + pixels[pixel + 1] * 0.7152 + pixels[pixel + 2] * 0.0722 >= 128) packed[(y >> 3) * width + x] |= 1 << (y & 7) }
+      sampled.push(packed)
       if (frameIndex % 3 === 0) { progress.value = (frameIndex + 1) / frameCount; statusNode.textContent = text.convertingVideo.replace('{percent}', String(Math.round(progress.value * 100))).replace('{frames}', String(frameIndex + 1)); await new Promise((resolve) => setTimeout(resolve, 0)) }
     }
+    const chunks = []; let eventCount = 0
+    const period = Math.max(1, Math.floor(1000 / fps))
+    const emit = (pixels, delayMs) => {
+      let remaining = Math.max(1, delayMs); let first = true
+      while (remaining > 0) {
+        const part = Math.min(remaining, 65535)
+        if (first) { chunks.push(1, part & 255, (part >> 8) & 255); for (let i = 0; i < pixels.length; i += 1) chunks.push(pixels[i]); first = false }
+        else chunks.push(2, part & 255, (part >> 8) & 255)
+        eventCount += 1; remaining -= part
+      }
+    }
+    let pending = sampled[0]; let delay = period
+    for (let i = 1; i < sampled.length; i += 1) {
+      let same = pending.length === sampled[i].length
+      if (same) for (let n = 0; n < pending.length; n += 1) if (pending[n] !== sampled[i][n]) { same = false; break }
+      if (same) { delay += period; continue }
+      emit(pending, delay); pending = sampled[i]; delay = period
+    }
+    emit(pending, delay)
+    const output = new Uint8Array(14 + chunks.length)
+    const header = new DataView(output.buffer)
+    header.setUint8(0, 0x4f); header.setUint8(1, 0x41); header.setUint8(2, 0x4e); header.setUint8(3, 0x32)
+    header.setUint16(4, width, true); header.setUint16(6, height, true); header.setUint16(8, fps, true); header.setUint32(10, eventCount, true)
+    output.set(chunks, 14)
+    const parsed = parseOanBytes(output)
+    const stored = parsed ? parsed.frames : frameCount
     const name = `${(file.name.replace(/\.[^.]+$/, '') || 'animation').replace(/[^a-zA-Z0-9_.-]/g, '_')}-${width}x${height}-${fps}.oan`
-    pendingMedia = { name, output, width, height, fps, frames: frameCount }
-    statusNode.textContent = text.previewReady.replace('{frames}', String(frameCount)).replace('{size}', mediaBytes(output.byteLength)); progress.classList.add('hidden')
-    await renderMediaAssets([{ id: 'pending', name: name.replace(/\.oan$/, ''), width, height, fps, frames: frameCount, duration_seconds: frameCount / fps, size: output.byteLength, data: output }]); setMediaBusy(false)
+    pendingMedia = { name, output, width, height, fps, frames: stored }
+    statusNode.textContent = text.previewReady.replace('{frames}', String(stored)).replace('{size}', mediaBytes(output.byteLength)); progress.classList.add('hidden')
+    await renderMediaAssets([{ id: 'pending', name: name.replace(/\.oan$/, ''), width, height, fps, frames: stored, duration_seconds: (parsed?.durationMs ?? 0) / 1000, size: output.byteLength, data: output }]); setMediaBusy(false)
   }
 
   async function uploadPendingMedia() {
@@ -1454,41 +1585,37 @@ export function mountOLEDDesigner(root, host) {
     if (externalMediaTimer !== null) clearInterval(externalMediaTimer)
     externalMediaTimer = null
     externalMediaActive = false
-    const { width, height } = logicalSize()
-    const frameBytes = Number(asset.width) * Number(asset.height) / 8
-    const frames = Math.max(1, Number(asset.frames) || 1)
-    if (!Number.isInteger(frameBytes) || bytes.length < 14 + frameBytes * frames) {
+    const parsed = parseOanBytes(bytes)
+    if (!parsed) {
       render()
       return
     }
+    const { width, height } = logicalSize()
     externalMediaActive = true
     preview.width = width * pixelScale
     preview.height = height * pixelScale
     const context = preview.getContext('2d')
     if (!context) return
-    const originX = Math.floor((width - asset.width) / 2)
-    const originY = Math.floor((height - asset.height) / 2)
-    let frame = 0
+    const originX = Math.floor((width - parsed.width) / 2)
+    const originY = Math.floor((height - parsed.height) / 2)
+    const started = performance.now()
     const paint = () => {
-      context.fillStyle = settings.display_enabled ? '#f4f7f6' : 'rgba(244, 247, 246, .34)'
-      context.fillRect(0, 0, preview.width, preview.height)
+      const step = oanStepAt(parsed, performance.now() - started)
       context.fillStyle = '#020706'
       context.fillRect(0, 0, preview.width, preview.height)
       context.fillStyle = settings.display_enabled ? '#f4f7f6' : 'rgba(244, 247, 246, .34)'
-      const offset = 14 + frame * frameBytes
-      for (let y = 0; y < asset.height; y += 1) {
-        for (let x = 0; x < asset.width; x += 1) {
-          if ((bytes[offset + (y >> 3) * asset.width + x] & (1 << (y & 7))) === 0) continue
+      for (let y = 0; y < parsed.height; y += 1) {
+        for (let x = 0; x < parsed.width; x += 1) {
+          if ((parsed.pixels[step.offset + (y >> 3) * parsed.width + x] & (1 << (y & 7))) === 0) continue
           const targetX = originX + x
           const targetY = originY + y
           if (targetX < 0 || targetX >= width || targetY < 0 || targetY >= height) continue
           context.fillRect(targetX * pixelScale, targetY * pixelScale, pixelScale - 1, pixelScale - 1)
         }
       }
-      frame = (frame + 1) % frames
     }
     paint()
-    if (frames > 1) externalMediaTimer = setInterval(paint, Math.max(1, Math.round(1000 / Number(asset.fps || 30))))
+    if (parsed.steps.length > 1) externalMediaTimer = setInterval(paint, 33)
   }
 
   function drawElement(pixels, width, height, item) {

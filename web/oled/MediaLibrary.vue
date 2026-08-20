@@ -4,6 +4,7 @@ import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NInput, NInputNumber,
 import { Download, LockKeyhole, UnlockKeyhole, Upload } from '@lucide/vue'
 import { translate, type MessageKey } from './i18n'
 import OledAssetPreview, { type OledAssetPreviewData } from './OledAssetPreview.vue'
+import { encodeOan2, parseOan } from './oan'
 
 interface ExtensionHost { extension: Readonly<{ value: { id?: string } }> }
 
@@ -111,16 +112,14 @@ function handleDropzoneKey(event: KeyboardEvent) {
 function chooseAssetFile() { assetFileInput.value?.click() }
 
 function decodeAssetFile(file: File, data: Uint8Array): Asset {
-  if (data.byteLength < 14 || data[0] !== 0x4f || data[1] !== 0x41 || data[2] !== 0x4e || data[3] !== 0x31) throw new Error(t('invalidAssetFile'))
-  const header = new DataView(data.buffer, data.byteOffset, data.byteLength)
-  const assetWidth = header.getUint16(4, true)
-  const assetHeight = header.getUint16(6, true)
-  const assetFps = header.getUint16(8, true)
-  const assetFrames = header.getUint32(10, true)
-  const expectedSize = 14 + assetFrames * assetWidth * assetHeight / 8
-  if (assetWidth < 8 || assetWidth > 256 || assetHeight < 8 || assetHeight > 256 || assetHeight % 8 || assetFps < 1 || assetFps > 120 || assetFrames < 1 || expectedSize !== data.byteLength || data.byteLength > 32 * 1024 * 1024) throw new Error(t('invalidAssetFile'))
+  let parsed
+  try {
+    parsed = parseOan(data)
+  } catch {
+    throw new Error(t('invalidAssetFile'))
+  }
   const name = (file.name.replace(/\.oan$/i, '') || 'animation').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 92) || 'animation'
-  return { id: 'pending', name, width: assetWidth, height: assetHeight, fps: assetFps, frames: assetFrames, duration_seconds: assetFrames / assetFps, size: data.byteLength, data }
+  return { id: 'pending', name, width: parsed.width, height: parsed.height, fps: parsed.fps, frames: parsed.frames, duration_seconds: parsed.durationMs / 1000, size: data.byteLength, data }
 }
 
 async function handleAssetFileChange(event: Event) {
@@ -188,32 +187,34 @@ async function convert() {
     let [targetWidth, targetHeight] = resolution.value === 'custom' ? [Number(width.value), Number(height.value)] : resolution.value.split('x').map(Number)
     if (resolution.value === 'custom' && ratioLocked.value) { targetHeight = Math.max(8, Math.round((targetWidth / aspectRatio.value) / 8) * 8); height.value = targetHeight }
     if (!Number.isInteger(targetWidth) || !Number.isInteger(targetHeight) || targetWidth < 8 || targetWidth > 256 || targetHeight < 8 || targetHeight > 256 || targetHeight % 8) throw new Error('Invalid OLED resolution')
-    frameCount = Math.max(1, Math.floor(videoDuration * fps.value)); totalFrames.value = frameCount; const outputSize = 14 + frameCount * targetWidth * targetHeight / 8
-    if (outputSize > 32 * 1024 * 1024) throw new Error(t('assetTooLarge'))
+    frameCount = Math.max(1, Math.floor(videoDuration * fps.value)); totalFrames.value = frameCount
+    const frameBytes = targetWidth * targetHeight / 8
+    if (14 + frameCount * frameBytes > 32 * 1024 * 1024) throw new Error(t('assetTooLarge'))
     canvas.width = targetWidth; canvas.height = targetHeight
-    const output = new Uint8Array(outputSize); const header = new DataView(output.buffer)
-    header.setUint8(0, 0x4f); header.setUint8(1, 0x41); header.setUint8(2, 0x4e); header.setUint8(3, 0x31); header.setUint16(4, targetWidth, true); header.setUint16(6, targetHeight, true); header.setUint16(8, fps.value, true); header.setUint32(10, frameCount, true)
+    const sampled: Uint8Array[] = []
     for (let frame = 0; frame < frameCount; frame += 1) {
       if (conversionCancelled.value) throw new Error('conversion cancelled')
       await seek(video, Math.min(videoDuration - 0.001, frame / fps.value)); context.fillStyle = '#000'; context.fillRect(0, 0, targetWidth, targetHeight)
       if (conversionCancelled.value) throw new Error('conversion cancelled')
       const scale = fit.value === 'cover' ? Math.max(targetWidth / video.videoWidth, targetHeight / video.videoHeight) : Math.min(targetWidth / video.videoWidth, targetHeight / video.videoHeight)
       context.drawImage(video, (targetWidth - video.videoWidth * scale) / 2, (targetHeight - video.videoHeight * scale) / 2, video.videoWidth * scale, video.videoHeight * scale)
-      const pixels = context.getImageData(0, 0, targetWidth, targetHeight).data; const offset = 14 + frame * targetWidth * targetHeight / 8
-      for (let y = 0; y < targetHeight; y += 1) for (let x = 0; x < targetWidth; x += 1) { const pixel = (y * targetWidth + x) * 4; if (pixels[pixel] * 0.2126 + pixels[pixel + 1] * 0.7152 + pixels[pixel + 2] * 0.0722 >= 128) output[offset + (y >> 3) * targetWidth + x] |= 1 << (y & 7) }
+      const pixels = context.getImageData(0, 0, targetWidth, targetHeight).data
+      const packed = new Uint8Array(frameBytes)
+      for (let y = 0; y < targetHeight; y += 1) for (let x = 0; x < targetWidth; x += 1) { const pixel = (y * targetWidth + x) * 4; if (pixels[pixel] * 0.2126 + pixels[pixel + 1] * 0.7152 + pixels[pixel + 2] * 0.0722 >= 128) packed[(y >> 3) * targetWidth + x] |= 1 << (y & 7) }
+      sampled.push(packed)
       const now = performance.now()
       if (frame === frameCount - 1) {
         pendingFrame = frame + 1
         pendingTimestamp = now
         flushProgress()
       } else scheduleProgress(frame + 1, now)
-      // Yield on every frame so the browser can paint the progress element and
-      // handle cancellation/input while a long video is being converted.
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
     }
+    const output = encodeOan2(targetWidth, targetHeight, fps.value, sampled)
+    const parsed = parseOan(output)
     const name = `${(selectedFile.value.name.replace(/\.[^.]+$/, '') || 'animation').replace(/[^a-zA-Z0-9_.-]/g, '_')}-${targetWidth}x${targetHeight}-${fps.value}.oan`
-    pending.value = { id: 'pending', name: name.replace(/\.oan$/, ''), width: targetWidth, height: targetHeight, fps: fps.value, frames: frameCount, duration_seconds: frameCount / fps.value, size: output.byteLength, data: output }
-    status.value = t('previewReady').replace('{frames}', String(frameCount)).replace('{size}', bytes(output.byteLength))
+    pending.value = { id: 'pending', name: name.replace(/\.oan$/, ''), width: targetWidth, height: targetHeight, fps: fps.value, frames: parsed.frames, duration_seconds: parsed.durationMs / 1000, size: output.byteLength, data: output }
+    status.value = t('previewReady').replace('{frames}', String(parsed.frames)).replace('{size}', bytes(output.byteLength))
   } catch (reason) {
     if (conversionCancelled.value) status.value = t('conversionCancelled')
     else error.value = reason instanceof Error ? reason.message : String(reason)

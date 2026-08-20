@@ -1,6 +1,7 @@
 #include "../src/assets.hpp"
 #include "../src/config.hpp"
 #include "../src/json.hpp"
+#include "../src/oan.hpp"
 #include "../src/renderer.hpp"
 #include "../src/runtime.hpp"
 
@@ -8,7 +9,10 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <sstream>
+#include <string>
 #include <unistd.h>
+#include <vector>
 
 using namespace onekvm::oled;
 
@@ -396,5 +400,70 @@ int main() {
   assert(!loadConfig(path, withVariables, raw, error, 128, 64));
   assert(error.find("c_") != std::string::npos);
   ::unlink(path.c_str());
+
+  auto write16 = [](std::vector<unsigned char> &out, uint16_t value) {
+    out.push_back(static_cast<unsigned char>(value));
+    out.push_back(static_cast<unsigned char>(value >> 8));
+  };
+  auto write32 = [](std::vector<unsigned char> &out, uint32_t value) {
+    out.push_back(static_cast<unsigned char>(value));
+    out.push_back(static_cast<unsigned char>(value >> 8));
+    out.push_back(static_cast<unsigned char>(value >> 16));
+    out.push_back(static_cast<unsigned char>(value >> 24));
+  };
+  std::vector<unsigned char> oan2;
+  oan2.insert(oan2.end(), {'O', 'A', 'N', '2'});
+  write16(oan2, 8);
+  write16(oan2, 8);
+  write16(oan2, 10);
+  write32(oan2, 5);
+  oan2.push_back(kOanOpFrame);
+  write16(oan2, 50);
+  oan2.insert(oan2.end(), 8, 0x01);
+  oan2.push_back(kOanOpSleep);
+  write16(oan2, 200);
+  oan2.push_back(kOanOpInvertX);
+  write16(oan2, 0);
+  write16(oan2, 30);
+  oan2.push_back(kOanOpInvertY);
+  write16(oan2, 1);
+  write16(oan2, 30);
+  oan2.push_back(kOanOpLoop);
+  write16(oan2, 2);
+  std::string oan2Bytes(oan2.begin(), oan2.end());
+  std::istringstream oan2Stream(oan2Bytes);
+  OanInfo oan2Info{};
+  assert(inspectOan(oan2Stream, oan2.size(), oan2Info));
+  assert(oan2Info.version2);
+  assert(oan2Info.stored_frames == 1);
+  assert(oan2Info.duration_ms == 310);
+  oan2Stream.clear();
+  oan2Stream.seekg(0);
+  std::vector<unsigned char> source;
+  std::vector<OanEvent> events;
+  assert(loadOan(oan2Stream, oan2.size(), oan2Info, source, events));
+  assert(events.size() == 5);
+  assert(events[4].op == kOanOpLoop && events[4].arg == 2);
+  std::vector<unsigned char> raster;
+  std::vector<OanStep> steps;
+  uint32_t loop_index = kOanNoLoop;
+  assert(expandOanRaster(oan2Info, source, events, raster, steps, loop_index));
+  assert(loop_index == 4);
+  assert(steps.size() > loop_index);
+  assert(oanFrameAt(steps, oanRasterDuration(steps), loop_index, 0) == 0);
+
+  std::vector<unsigned char> oan1;
+  oan1.insert(oan1.end(), {'O', 'A', 'N', '1'});
+  write16(oan1, 8);
+  write16(oan1, 8);
+  write16(oan1, 10);
+  write32(oan1, 2);
+  oan1.insert(oan1.end(), 8, 0x00);
+  oan1.insert(oan1.end(), 8, 0xff);
+  std::istringstream oan1Stream(std::string(oan1.begin(), oan1.end()));
+  OanInfo oan1Info{};
+  assert(inspectOan(oan1Stream, oan1.size(), oan1Info));
+  assert(!oan1Info.version2);
+  assert(oan1Info.stored_frames == 2);
   return 0;
 }

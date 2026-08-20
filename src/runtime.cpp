@@ -5,12 +5,14 @@
 #include "renderer.hpp"
 #include "status_source.hpp"
 #include "assets.hpp"
+#include "oan.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -304,47 +306,94 @@ bool frameToCanvas(std::span<const unsigned char> bytes, int width, int height,
   return true;
 }
 
+bool showPixels(Device &device, const DisplayProfile &profile, int rotation,
+                std::span<const unsigned char> bytes, int width, int height,
+                std::optional<Canvas> &previous, std::string &error) {
+  Canvas canvas;
+  if (!frameToCanvas(bytes, width, height, profile.width, profile.height,
+                     rotation, canvas, error))
+    return false;
+  if (previous.has_value()) {
+    if (!device.showChanged(*previous, canvas, error))
+      return false;
+  } else if (!device.show(canvas, error)) {
+    return false;
+  }
+  previous = std::move(canvas);
+  return true;
+}
+
+void waitDelay(Clock::time_point started, uint16_t delay_ms) {
+  const auto elapsed = Clock::now() - started;
+  const auto period = std::chrono::milliseconds(delay_ms);
+  if (elapsed < period)
+    std::this_thread::sleep_for(period - elapsed);
+}
+
 bool playAsset(const std::filesystem::path &assetPath, Device &device,
                const DisplayProfile &profile, int rotation, std::string &error) {
+  std::error_code fileError;
+  const auto size = std::filesystem::file_size(assetPath, fileError);
   std::ifstream file(assetPath, std::ios::binary);
-  std::array<unsigned char, 14> header{};
-  file.read(reinterpret_cast<char *>(header.data()), header.size());
-  if (!file || std::string_view(reinterpret_cast<char *>(header.data()), 4) != "OAN1") {
+  OanInfo info{};
+  std::vector<unsigned char> pixels;
+  std::vector<OanEvent> events;
+  if (fileError || !loadOan(file, size, info, pixels, events)) {
     error = "invalid OLED animation";
     return false;
   }
-  const int fps = static_cast<int>(header[8] | (header[9] << 8));
-  const uint32_t frames = static_cast<uint32_t>(header[10] | (header[11] << 8) |
-                                                 (header[12] << 16) | (header[13] << 24));
-  const int width = static_cast<int>(header[4] | (header[5] << 8));
-  const int height = static_cast<int>(header[6] | (header[7] << 8));
-  const std::size_t frameBytes = static_cast<std::size_t>(width) * height / 8;
-  if (fps <= 0 || frames == 0 || width < 8 || width > kMaxWidth || height < 8 ||
-      height > kMaxHeight || height % 8 != 0) {
+  if (info.width > kMaxWidth || info.height > kMaxHeight) {
     error = "invalid OLED animation header";
     return false;
   }
-  std::vector<unsigned char> bytes(frameBytes);
+  std::vector<unsigned char> buf(info.frame_bytes, 0);
   std::optional<Canvas> previous;
-  for (uint32_t frame = 0; frame < frames && !stopped.load(); ++frame) {
+  bool have = false;
+  uint32_t pc = 0;
+  unsigned guard = 0;
+  while (pc < events.size() && !stopped.load() &&
+         guard++ < 16U * 1024U * 1024U) {
+    const OanEvent &event = events[pc];
+    if (event.op == kOanOpLoop) {
+      if (event.arg >= events.size())
+        break;
+      pc = event.arg;
+      continue;
+    }
     const auto frameStart = Clock::now();
-    file.read(reinterpret_cast<char *>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    if (!file) { error = "could not read OLED animation"; return false; }
-    Canvas canvas;
-    if (!frameToCanvas(bytes, width, height, profile.width, profile.height,
-                       rotation, canvas, error))
-      return false;
-    if (previous.has_value()) {
-      if (!device.showChanged(*previous, canvas, error)) return false;
-    } else if (!device.show(canvas, error)) {
+    if (event.op == kOanOpFrame) {
+      if (event.frame_index < 0)
+        break;
+      const std::size_t offset =
+          static_cast<std::size_t>(event.frame_index) * info.frame_bytes;
+      if (offset + info.frame_bytes > pixels.size()) {
+        error = "could not read OLED animation";
+        return false;
+      }
+      std::memcpy(buf.data(), pixels.data() + offset, info.frame_bytes);
+      have = true;
+      if (!showPixels(device, profile, rotation,
+                      std::span<const unsigned char>(buf.data(), info.frame_bytes),
+                      info.width, info.height, previous, error))
+        return false;
+    } else if (event.op == kOanOpInvertX && have) {
+      oanInvertX(buf.data(), info.width, info.height, event.arg);
+      if (!showPixels(device, profile, rotation,
+                      std::span<const unsigned char>(buf.data(), info.frame_bytes),
+                      info.width, info.height, previous, error))
+        return false;
+    } else if (event.op == kOanOpInvertY && have) {
+      oanInvertY(buf.data(), info.width, info.height, event.arg);
+      if (!showPixels(device, profile, rotation,
+                      std::span<const unsigned char>(buf.data(), info.frame_bytes),
+                      info.width, info.height, previous, error))
+        return false;
+    } else if (event.op != kOanOpSleep) {
+      error = "invalid OLED animation";
       return false;
     }
-    previous = canvas;
-    const auto elapsed = Clock::now() - frameStart;
-    const auto period = std::chrono::milliseconds(1000 / fps);
-    if (elapsed < period)
-      std::this_thread::sleep_for(period - elapsed);
+    waitDelay(frameStart, event.delay_ms);
+    ++pc;
   }
   return !stopped.load();
 }
@@ -358,36 +407,32 @@ int deviceRotation(const DisplayProfile &profile, int rotation) {
 struct CachedAnimation {
   int width = 0;
   int height = 0;
-  int fps = 0;
-  uint32_t frames = 0;
+  uint32_t duration_ms = 0;
+  uint32_t loop_index = kOanNoLoop;
+  std::size_t frame_bytes = 0;
   std::vector<unsigned char> data;
+  std::vector<OanStep> steps;
 };
 
 bool loadAnimation(const std::filesystem::path &path, CachedAnimation &output) {
+  std::error_code fileError;
+  const auto size = std::filesystem::file_size(path, fileError);
   std::ifstream file(path, std::ios::binary);
-  std::array<unsigned char, 14> header{};
-  file.read(reinterpret_cast<char *>(header.data()), header.size());
-  if (!file ||
-      std::string_view(reinterpret_cast<char *>(header.data()), 4) != "OAN1")
+  OanInfo info{};
+  std::vector<unsigned char> source;
+  std::vector<OanEvent> events;
+  if (fileError || !loadOan(file, size, info, source, events))
     return false;
-  output.width = static_cast<int>(header[4] | (header[5] << 8));
-  output.height = static_cast<int>(header[6] | (header[7] << 8));
-  output.fps = static_cast<int>(header[8] | (header[9] << 8));
-  output.frames = static_cast<uint32_t>(header[10] | (header[11] << 8) |
-                                        (header[12] << 16) | (header[13] << 24));
-  if (output.width < 8 || output.width > kMaxWidth || output.height < 8 ||
-      output.height > kMaxHeight || output.height % 8 != 0 || output.fps <= 0 ||
-      output.frames == 0)
+  if (info.width > kMaxWidth || info.height > kMaxHeight)
     return false;
-  const std::size_t frameBytes = static_cast<std::size_t>(output.width) *
-                                 output.height / 8;
-  const std::size_t total = frameBytes * output.frames;
-  if (total > 32U * 1024U * 1024U || total / frameBytes != output.frames)
+  if (!expandOanRaster(info, source, events, output.data, output.steps,
+                       output.loop_index))
     return false;
-  output.data.resize(total);
-  file.read(reinterpret_cast<char *>(output.data.data()),
-            static_cast<std::streamsize>(total));
-  return static_cast<std::size_t>(file.gcount()) == total;
+  output.width = info.width;
+  output.height = info.height;
+  output.duration_ms = oanRasterDuration(output.steps);
+  output.frame_bytes = info.frame_bytes;
+  return true;
 }
 
 void updateAnimationLayers(
@@ -407,16 +452,21 @@ void updateAnimationLayers(
       found = cache.emplace(element.asset, std::move(animation)).first;
     }
     CachedAnimation &animation = found->second;
-    if (animation.frames == 0 || animation.fps <= 0) {
+    if (animation.steps.empty() || animation.duration_ms == 0 ||
+        animation.frame_bytes == 0) {
       element.pixels.clear();
       continue;
     }
     /* Index from the 30 Hz apply tick, not CLOCK_MONOTONIC. A 50 ms
      * coarse clock repeats the same OAN frame and drops seq to 20/s. */
-    const uint64_t frame =
-        tick * static_cast<uint64_t>(animation.fps) / 30U % animation.frames;
-    const std::size_t frameBytes = static_cast<std::size_t>(animation.width) *
-                                   animation.height / 8;
+    const uint64_t elapsed_ms = tick * 1000U / 30U;
+    const int frame = oanFrameAt(animation.steps, animation.duration_ms,
+                                 animation.loop_index, elapsed_ms);
+    if (frame < 0) {
+      element.pixels.clear();
+      continue;
+    }
+    const std::size_t frameBytes = animation.frame_bytes;
     const std::size_t offset = static_cast<std::size_t>(frame) * frameBytes;
     if (offset + frameBytes > animation.data.size()) {
       element.pixels.clear();

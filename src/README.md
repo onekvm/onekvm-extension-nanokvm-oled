@@ -16,5 +16,6 @@ The OLED runtime is split by responsibility so each part can be read and changed
 | `canvas.hpp` | Pixel drawing, rotation, text, shapes, and bitmaps |
 | `font.hpp` | OLED font loading and glyph measurements |
 | `types.hpp` | Shared constants and data structures |
+| `oan.hpp` | OAN1 packed frames and OAN2 event stream (`FRAME`, `SLEEP`, `INVERT_X`, `INVERT_Y`, `LOOP` goto) |
 
 Dependencies point toward the small shared modules: runtime code can use configuration, status, device, and rendering code, while those modules do not depend on the application loop.

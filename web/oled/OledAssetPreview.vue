@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { frameAt, parseOan } from './oan'
 
 export interface OledAssetPreviewData {
   id?: string
@@ -39,23 +40,37 @@ function draw() {
   const displayHeight = screenHeight.value
   const { bytes, full } = decodePreview(asset)
   const frameBytes = asset.width * asset.height / 8
-  if (bytes.length < (full ? 14 + frameBytes * asset.frames : frameBytes)) return
+  let parsed = null
+  if (full) {
+    try { parsed = parseOan(bytes) } catch { parsed = null }
+  }
+  if (!parsed && bytes.length < frameBytes) return
   target.width = displayWidth
   target.height = displayHeight
   const context = target.getContext('2d')
   if (!context) return
   const image = context.createImageData(displayWidth, displayHeight)
-  let frame = 0
+  const started = performance.now()
   const paint = () => {
-    const offset = full ? 14 + frame * frameBytes : 0
+    let source = bytes
+    let offset = 0
+    let width = asset.width
+    let height = asset.height
+    if (parsed) {
+      const step = frameAt(parsed, performance.now() - started)
+      source = parsed.pixels
+      offset = step.offset
+      width = parsed.width
+      height = parsed.height
+    }
     image.data.fill(0)
-    const originX = Math.floor((displayWidth - asset.width) / 2)
-    const originY = Math.floor((displayHeight - asset.height) / 2)
-    for (let y = 0; y < asset.height; y += 1) for (let x = 0; x < asset.width; x += 1) {
+    const originX = Math.floor((displayWidth - width) / 2)
+    const originY = Math.floor((displayHeight - height) / 2)
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
       const targetX = originX + x
       const targetY = originY + y
       if (targetX < 0 || targetX >= displayWidth || targetY < 0 || targetY >= displayHeight) continue
-      const on = (bytes[offset + (y >> 3) * asset.width + x] & (1 << (y & 7))) !== 0
+      const on = (source[offset + (y >> 3) * width + x] & (1 << (y & 7))) !== 0
       const pixel = (targetY * displayWidth + targetX) * 4
       image.data[pixel] = on ? 228 : 0
       image.data[pixel + 1] = on ? 255 : 5
@@ -63,10 +78,9 @@ function draw() {
       image.data[pixel + 3] = 255
     }
     context.putImageData(image, 0, 0)
-    if (full && asset.frames > 1) frame = (frame + 1) % asset.frames
   }
   paint()
-  if (full && asset.frames > 1) timer = window.setInterval(paint, Math.max(1, Math.round(1000 / asset.fps)))
+  if (parsed && parsed.steps.length > 1) timer = window.setInterval(paint, 33)
 }
 
 watch(() => [props.asset, props.displayWidth, props.displayHeight], draw, { deep: true, flush: 'post' })

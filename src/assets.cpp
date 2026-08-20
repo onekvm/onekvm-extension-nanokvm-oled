@@ -1,5 +1,6 @@
 #include "assets.hpp"
 #include "json.hpp"
+#include "oan.hpp"
 
 #include <algorithm>
 #include <array>
@@ -332,22 +333,9 @@ bool readChunkedBody(int fd, std::string buffer, std::ofstream &file,
   }
 }
 
-uint16_t little16(const std::array<char, 14> &header, std::size_t at) {
-  return static_cast<uint16_t>(static_cast<unsigned char>(header[at]) |
-                               static_cast<unsigned char>(header[at + 1]) << 8);
-}
-
-uint32_t little32(const std::array<char, 14> &header, std::size_t at) {
-  return static_cast<uint32_t>(
-      static_cast<unsigned char>(header[at]) |
-      static_cast<unsigned char>(header[at + 1]) << 8 |
-      static_cast<unsigned char>(header[at + 2]) << 16 |
-      static_cast<unsigned char>(header[at + 3]) << 24);
-}
-
-std::string durationJSON(uint32_t frames, uint16_t fps) {
-  const uint32_t seconds = frames / fps;
-  const uint32_t hundredths = (frames % fps) * 100U / fps;
+std::string durationJSON(uint32_t duration_ms) {
+  const uint32_t seconds = duration_ms / 1000U;
+  const uint32_t hundredths = (duration_ms % 1000U) / 10U;
   std::string value = std::to_string(seconds) + ".";
   if (hundredths < 10)
     value += '0';
@@ -356,24 +344,9 @@ std::string durationJSON(uint32_t frames, uint16_t fps) {
 }
 
 bool validAssetFile(const std::filesystem::path &path, std::uintmax_t size,
-                    std::array<char, 14> &header) {
-  if (size < header.size())
-    return false;
+                    OanInfo &info) {
   std::ifstream file(path, std::ios::binary);
-  file.read(header.data(), static_cast<std::streamsize>(header.size()));
-  if (!file || std::string_view(header.data(), 4) != "OAN1")
-    return false;
-  const uint16_t width = little16(header, 4);
-  const uint16_t height = little16(header, 6);
-  const uint16_t fps = little16(header, 8);
-  const uint32_t frames = little32(header, 10);
-  if (width < 8 || width > 256 || height < 8 || height > 256 ||
-      height % 8 != 0 || fps == 0 || fps > 120 || frames == 0)
-    return false;
-  const std::uintmax_t frameBytes =
-      static_cast<std::uintmax_t>(width) * height / 8;
-  return frames <= (maxAssetBytes - header.size()) / frameBytes &&
-         size == header.size() + static_cast<std::uintmax_t>(frames) * frameBytes;
+  return static_cast<bool>(file) && inspectOan(file, size, info);
 }
 
 void listAssets(int fd, const std::filesystem::path &root) {
@@ -402,17 +375,12 @@ void listAssets(int fd, const std::filesystem::path &root) {
     if (::stat(path.c_str(), &information) < 0 || !S_ISREG(information.st_mode))
       continue;
     const std::uintmax_t size = static_cast<std::uintmax_t>(information.st_size);
-    std::array<char, 14> header{};
-    if (!validAssetFile(path, size, header))
+    OanInfo info{};
+    if (!validAssetFile(path, size, info))
       continue;
-    const uint16_t width = little16(header, 4);
-    const uint16_t height = little16(header, 6);
-    const uint16_t fps = little16(header, 8);
-    const uint32_t frames = little32(header, 10);
-    const std::size_t frameBytes = static_cast<std::size_t>(width) * height / 8;
-    std::string preview(frameBytes, '\0');
+    std::string preview(info.frame_bytes, '\0');
     std::ifstream file(path, std::ios::binary);
-    file.seekg(static_cast<std::streamoff>(header.size()));
+    file.seekg(static_cast<std::streamoff>(info.first_frame_offset));
     file.read(preview.data(), static_cast<std::streamsize>(preview.size()));
     if (!file)
       continue;
@@ -421,11 +389,11 @@ void listAssets(int fd, const std::filesystem::path &root) {
     first = false;
     output += "{\"id\":" + jsonEscape(filename) +
               ",\"name\":" + jsonEscape(filename.substr(0, filename.size() - 4)) +
-              ",\"width\":" + std::to_string(width) +
-              ",\"height\":" + std::to_string(height) +
-              ",\"fps\":" + std::to_string(fps) +
-              ",\"frames\":" + std::to_string(frames) +
-              ",\"duration_seconds\":" + durationJSON(frames, fps) +
+              ",\"width\":" + std::to_string(info.width) +
+              ",\"height\":" + std::to_string(info.height) +
+              ",\"fps\":" + std::to_string(info.fps) +
+              ",\"frames\":" + std::to_string(info.stored_frames) +
+              ",\"duration_seconds\":" + durationJSON(info.duration_ms) +
               ",\"size\":" + std::to_string(size) +
               ",\"preview_base64\":" + jsonEscape(base64(preview)) + "}";
   }
@@ -449,8 +417,8 @@ void getAsset(int fd, const std::filesystem::path &root,
   std::error_code error;
   const std::filesystem::path path = root / name;
   const std::uintmax_t size = std::filesystem::file_size(path, error);
-  std::array<char, 14> header{};
-  if (error || !validAssetFile(path, size, header)) {
+  OanInfo info{};
+  if (error || !validAssetFile(path, size, info)) {
     response(fd, "404 Not Found", "text/plain", "not found");
     return;
   }
@@ -484,8 +452,8 @@ void deleteAsset(int fd, const std::filesystem::path &root,
   std::error_code fileError;
   const auto path = root / name;
   const auto size = std::filesystem::file_size(path, fileError);
-  std::array<char, 14> header{};
-  if (fileError || !validAssetFile(path, size, header)) {
+  OanInfo info{};
+  if (fileError || !validAssetFile(path, size, info)) {
     response(fd, "404 Not Found", "text/plain", "not found");
     return;
   }
@@ -535,8 +503,8 @@ void renameAsset(int fd, const std::filesystem::path &root,
   const auto newPath = root / newName;
   std::error_code fileError;
   const auto size = std::filesystem::file_size(oldPath, fileError);
-  std::array<char, 14> header{};
-  if (fileError || !validAssetFile(oldPath, size, header)) {
+  OanInfo info{};
+  if (fileError || !validAssetFile(oldPath, size, info)) {
     response(fd, "404 Not Found", "text/plain", "not found");
     return;
   }
@@ -618,8 +586,8 @@ void uploadAsset(int fd, const std::filesystem::path &root,
   success = success && file.good();
   file.close();
 
-  std::array<char, 14> header{};
-  success = success && validAssetFile(temporary, total, header);
+  OanInfo info{};
+  success = success && validAssetFile(temporary, total, info);
   std::error_code renameError;
   if (success)
     std::filesystem::rename(temporary, root / name, renameError);
@@ -656,8 +624,8 @@ void requestPlayback(int fd, const std::filesystem::path &root,
   std::error_code fileError;
   const auto path = root / name;
   const auto size = std::filesystem::file_size(path, fileError);
-  std::array<char, 14> header{};
-  if (fileError || !validAssetFile(path, size, header)) {
+  OanInfo playInfo{};
+  if (fileError || !validAssetFile(path, size, playInfo)) {
     response(fd, "404 Not Found", "text/plain", "not found");
     return;
   }

@@ -24,8 +24,8 @@ $(BINARY): src/main.cpp $(SOURCES) $(HEADERS)
 	mkdir -p $(@D)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ src/main.cpp $(SOURCES) $(LDLIBS)
 
-$(OLED_PLAYER): tools/oled_play.cpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
+$(OLED_PLAYER): tools/oled_play.cpp src/oan.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Isrc -o $@ $<
 
 test: web tests/test_main
 	./tests/test_main
