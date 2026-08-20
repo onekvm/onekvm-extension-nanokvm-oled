@@ -51,16 +51,8 @@ public:
   }
 
   bool initialize(std::string &error) {
-    if (rtos_) {
-      /* C906L only sends 0x8d 0x14 0xAF when display_asleep. A glitch
-       * can blank the panel without that flag. CMD_OFF sets it so the
-       * first FRAME wakes the SSD1306. */
-      if (::ioctl(descriptor_, _IO('O', 5), 0) < 0) {
-        error = "OLED off: " + std::string(std::strerror(errno));
-        return false;
-      }
+    if (rtos_)
       return true;
-    }
     static constexpr std::array<uint8_t, 30> sequence = {
         0xae, 0x00, 0x10, 0x40, 0x81, 0xcf, 0xa1, 0xc8, 0xa6, 0xa8,
         0x3f, 0xd3, 0x00, 0xd5, 0x80, 0xd9, 0xf1, 0xda, 0x12, 0xdb,
