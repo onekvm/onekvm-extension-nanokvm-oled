@@ -90,6 +90,14 @@ assert.equal((markup.match(/id="rotation-select-host"/g) || []).length, 1)
 assert.ok(markup.indexOf('id="rotation-select-host"') < markup.indexOf('id="display-enabled"'), 'viewing direction belongs in the top-right display controls')
 assert.match(markup, /data-i18n="display">Enable OLED</)
 assert.match(markup, /class="display-toggle-control">[\s\S]*data-i18n="display">Enable OLED<[\s\S]*class="switch-row compact"/)
+assert.match(markup, /data-token="\{cpu_free\}"/)
+assert.match(markup, /data-token="\{mem_free\}"/)
+assert.match(markup, /data-token="\{disk_free\}"/)
+assert.doesNotMatch(markup, /data-token="\{cpu\}"/)
+assert.doesNotMatch(markup, /data-token="\{mem\}"/)
+assert.doesNotMatch(markup, /data-token="\{disk\}"/)
+assert.match(source, /cpu_free:/)
+assert.doesNotMatch(source, /cpu_idle:/)
 
 const registrations = []
 const vue = new Proxy({}, {

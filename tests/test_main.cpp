@@ -361,7 +361,19 @@ int main() {
   decoded.memoryTotal = 32ull * 1024 * 1024;
   decoded.storageAvailable = 8ull * 1024 * 1024 * 1024;
   decoded.storageTotal = 16ull * 1024 * 1024 * 1024;
-  assert(expandTemplate("{cpu} {mem} {disk}", decoded) == "12% 18M/32M 8G/16G");
+  assert(expandTemplate("{cpu} {mem} {disk}", decoded) == "{cpu} {mem} {disk}");
+  assert(expandTemplate("{cpu_used} {cpu_free} {cpu_available} {cpu_percent}",
+                        decoded) == "12% 88% 88% 12%");
+  assert(expandTemplate("{mem_used} {mem_free} {mem_available} {mem_percent}",
+                        decoded) == "18M 14M 14M 56%");
+  assert(expandTemplate(
+             "{disk_used} {disk_free} {disk_available} {disk_percent}",
+             decoded) == "8G 8G 8G 50%");
+  decoded.cpuPercent = -1;
+  decoded.memoryTotal = 0;
+  decoded.storageTotal = 0;
+  assert(expandTemplate("{cpu_free} {mem_free} {disk_free}", decoded) ==
+         "-- -- --");
   std::map<std::string, std::string> variables{{"c_room", "A1"}};
   assert(expandTemplate("{c_room} {ip}", decoded, variables) == "A1 192.0.2.5");
 

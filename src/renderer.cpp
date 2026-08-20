@@ -52,6 +52,29 @@ std::string formatBytes(uint64_t bytes) {
   return std::to_string(bytes) + "B";
 }
 
+std::string formatPercent(uint64_t part, uint64_t whole) {
+  if (whole == 0)
+    return "--";
+  return std::to_string((part * 100U) / whole) + "%";
+}
+
+void expandUsage(std::string &value, std::string_view prefix, uint64_t used,
+                 uint64_t available, uint64_t total, bool percentValues,
+                 bool present) {
+  const std::string root(prefix);
+  const std::string missing = "--";
+  const auto amount = [&](uint64_t quantity) {
+    return percentValues ? std::to_string(quantity) + "%" : formatBytes(quantity);
+  };
+  replaceAll(value, "{" + root + "_used}", present ? amount(used) : missing);
+  replaceAll(value, "{" + root + "_free}", present ? amount(available) : missing);
+  replaceAll(value, "{" + root + "_available}",
+             present ? amount(available) : missing);
+  replaceAll(value, "{" + root + "_percent}",
+             present ? (percentValues ? amount(used) : formatPercent(used, total))
+                     : missing);
+}
+
 std::string expandTemplate(std::string value, const Status &status,
                            const std::map<std::string, std::string> &variables) {
   replaceAll(value, "{ip}", status.ip.empty() ? "--" : status.ip);
@@ -74,32 +97,23 @@ std::string expandTemplate(std::string value, const Status &status,
                                  (minutes % 60 < 10 ? "0" : "") +
                                  std::to_string(minutes % 60) + "M"
                            : std::to_string(minutes) + "M");
-  replaceAll(value, "{cpu}",
-             status.cpuPercent < 0 ? "--"
-                                   : std::to_string(status.cpuPercent) + "%");
-  replaceAll(value, "{mem_used}",
-             status.memoryUsed == 0 && status.memoryTotal == 0
-                 ? "--"
-                 : formatBytes(status.memoryUsed));
-  replaceAll(value, "{mem_total}",
-             status.memoryTotal == 0 ? "--" : formatBytes(status.memoryTotal));
-  replaceAll(value, "{mem}",
-             status.memoryTotal == 0
-                 ? "--"
-                 : formatBytes(status.memoryUsed) + "/" +
-                       formatBytes(status.memoryTotal));
-  replaceAll(value, "{disk_free}",
-             status.storageAvailable == 0 && status.storageTotal == 0
-                 ? "--"
-                 : formatBytes(status.storageAvailable));
-  replaceAll(value, "{disk_total}",
-             status.storageTotal == 0 ? "--"
-                                      : formatBytes(status.storageTotal));
-  replaceAll(value, "{disk}",
-             status.storageTotal == 0
-                 ? "--"
-                 : formatBytes(status.storageTotal - status.storageAvailable) +
-                       "/" + formatBytes(status.storageTotal));
+  const bool cpuKnown = status.cpuPercent >= 0;
+  const uint64_t cpuUsed =
+      cpuKnown ? static_cast<uint64_t>(status.cpuPercent) : 0;
+  const uint64_t cpuFree =
+      cpuKnown ? static_cast<uint64_t>(std::max(0, 100 - status.cpuPercent)) : 0;
+  expandUsage(value, "cpu", cpuUsed, cpuFree, 100, true, cpuKnown);
+  const uint64_t memFree = status.memoryTotal > status.memoryUsed
+                               ? status.memoryTotal - status.memoryUsed
+                               : 0;
+  expandUsage(value, "mem", status.memoryUsed, memFree, status.memoryTotal,
+              false, status.memoryTotal != 0);
+  const uint64_t diskUsed =
+      status.storageTotal > status.storageAvailable
+          ? status.storageTotal - status.storageAvailable
+          : 0;
+  expandUsage(value, "disk", diskUsed, status.storageAvailable,
+              status.storageTotal, false, status.storageTotal != 0);
   replaceAll(value, "{processor}",
              status.processor.empty() ? "--" : status.processor);
   replaceAll(value, "{kernel}", status.kernel.empty() ? "--" : status.kernel);

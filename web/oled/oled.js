@@ -1242,15 +1242,18 @@ export function mountOLEDDesigner(root, host) {
         : (status?.video?.resolution ? `${status.video.resolution}P` : 'AUTO'),
       stream: status?.video?.active ? 'STREAM ACTIVE' : 'KVM READY',
       uptime: compactDuration(status?.uptime_seconds || 0),
-      cpu: status?.system?.cpu_percent == null ? '--' : `${Math.round(status.system.cpu_percent)}%`,
-      mem: compactMemory(status?.system?.memory_used_bytes, status?.system?.memory_total_bytes),
-      disk: compactMemory(
+      ...cpuUsage(status?.system?.cpu_percent),
+      ...byteUsage('mem', status?.system?.memory_used_bytes, status?.system?.memory_total_bytes),
+      ...byteUsage(
+        'disk',
         (status?.system?.storage_total_bytes || 0) - (status?.system?.storage_available_bytes || 0),
         status?.system?.storage_total_bytes,
+        status?.system?.storage_available_bytes,
       ),
     }
+    const tokenNames = Object.keys(values).join('|')
     let output = String(value || '').replace(
-      /\{(ip|hostname|codec|fps|resolution|stream|uptime|cpu|mem|disk)\}/g,
+      new RegExp(`\\{(${tokenNames})\\}`, 'g'),
       (_, key) => values[key],
     )
     const custom = parseVariables(settings.variables_json)
@@ -1260,9 +1263,38 @@ export function mountOLEDDesigner(root, host) {
     return output
   }
 
-  function compactMemory(used, total) {
-    if (!total) return '--'
-    return `${formatBytes(used || 0)}/${formatBytes(total)}`
+  function cpuUsage(percent) {
+    if (percent == null) {
+      return { cpu_used: '--', cpu_free: '--', cpu_available: '--', cpu_percent: '--' }
+    }
+    const used = Math.max(0, Math.round(percent))
+    const free = Math.max(0, 100 - used)
+    return {
+      cpu_used: `${used}%`,
+      cpu_free: `${free}%`,
+      cpu_available: `${free}%`,
+      cpu_percent: `${used}%`,
+    }
+  }
+
+  function byteUsage(prefix, used, total, available) {
+    const missing = '--'
+    if (!total) {
+      return {
+        [`${prefix}_used`]: missing,
+        [`${prefix}_free`]: missing,
+        [`${prefix}_available`]: missing,
+        [`${prefix}_percent`]: missing,
+      }
+    }
+    const usedBytes = Number(used) || 0
+    const freeBytes = available == null ? Math.max(0, total - usedBytes) : Number(available) || 0
+    return {
+      [`${prefix}_used`]: formatBytes(usedBytes),
+      [`${prefix}_free`]: formatBytes(freeBytes),
+      [`${prefix}_available`]: formatBytes(freeBytes),
+      [`${prefix}_percent`]: `${Math.floor((usedBytes * 100) / total)}%`,
+    }
   }
 
   function formatBytes(bytes) {
