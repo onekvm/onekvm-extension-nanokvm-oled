@@ -171,7 +171,7 @@ public:
           const int targetX = x + column;
           if (targetX < 0 || targetX >= width_)
             continue;
-          data_[static_cast<std::size_t>(targetPage * width_ + targetX)] =
+          data_[static_cast<std::size_t>(targetPage * width_ + targetX)] |=
               static_cast<uint8_t>(
                   bytes[static_cast<std::size_t>(page * width + column)]);
         }

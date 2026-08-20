@@ -87,6 +87,22 @@ int main() {
   Status cubeStatus;
   Canvas cubeFrame = render(cubeConfig, cubeStatus, true, 128, 64);
   assert(cubeFrame.at(100, 50) && cubeFrame.at(127, 63));
+  {
+    Canvas layered(128, 64);
+    layered.set(0, 0);
+    std::string zeros(1024, '\0');
+    layered.blitPageMajor(0, 0, 128, 64, zeros, 0);
+    assert(layered.at(0, 0));
+    Layout overlayLayout;
+    assert(parseLayout(
+        R"({"version":1,"elements":[{"id":"hud","type":"rect","x":100,"y":50,"width":28,"height":14,"filled":true,"text":"","scale":1},{"id":"bg","type":"animation","x":0,"y":0,"width":128,"height":64,"asset":"clip.oan"}]})",
+        {}, 0, overlayLayout, error, 128, 64));
+    overlayLayout.elements[1].pixels.assign(1024, '\0');
+    Config overlayConfig;
+    overlayConfig.layout = overlayLayout;
+    Canvas overlayFrame = render(overlayConfig, cubeStatus, true, 128, 64);
+    assert(overlayFrame.at(100, 50) && overlayFrame.at(127, 63));
+  }
   cubeConfig.rotation = 90;
   cubeConfig.layout.elements[0].x = 0;
   cubeConfig.layout.elements[0].y = 100;

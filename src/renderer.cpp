@@ -84,12 +84,6 @@ bool hasLiveLayer(const Config &config) {
                      });
 }
 
-bool coversDisplay(const Element &element, int displayWidth,
-                   int displayHeight) {
-  return element.x == 0 && element.y == 0 && element.width == displayWidth &&
-         element.height == displayHeight;
-}
-
 Canvas render(const Config &config, const Status &status,
               bool liveIndicatorOn, int displayWidth,
               int displayHeight) {
@@ -97,18 +91,8 @@ Canvas render(const Config &config, const Status &status,
   const int logicalWidth =
       config.rotation == 90 || config.rotation == 270 ? displayHeight
                                                        : displayWidth;
-  bool laterFullscreenAnimation = false;
-  for (auto it = config.layout.elements.rbegin();
-       it != config.layout.elements.rend(); ++it) {
-    if (it->hidden || it->type != "animation")
-      continue;
-    laterFullscreenAnimation = coversDisplay(*it, displayWidth, displayHeight);
-    break;
-  }
   for (const Element &element : config.layout.elements) {
     if (element.hidden)
-      continue;
-    if (laterFullscreenAnimation && element.type != "animation")
       continue;
     if (element.type == "text") {
       const std::string content = expandTemplate(element.text, status);
