@@ -372,8 +372,11 @@ int main() {
   decoded.cpuPercent = -1;
   decoded.memoryTotal = 0;
   decoded.storageTotal = 0;
-  assert(expandTemplate("{cpu_free} {mem_free} {disk_free}", decoded) ==
-         "-- -- --");
+  assert(expandTemplate(
+             "{cpu_used} {cpu_free} {cpu_available} {cpu_percent} "
+             "{mem_used} {mem_free} {mem_available} {mem_percent} "
+             "{disk_used} {disk_free} {disk_available} {disk_percent}",
+             decoded) == "-- -- -- -- -- -- -- -- -- -- -- --");
   std::map<std::string, std::string> variables{{"c_room", "A1"}};
   assert(expandTemplate("{c_room} {ip}", decoded, variables) == "A1 192.0.2.5");
 

@@ -1279,7 +1279,7 @@ export function mountOLEDDesigner(root, host) {
 
   function byteUsage(prefix, used, total, available) {
     const missing = '--'
-    if (!total) {
+    if (!total || used == null) {
       return {
         [`${prefix}_used`]: missing,
         [`${prefix}_free`]: missing,

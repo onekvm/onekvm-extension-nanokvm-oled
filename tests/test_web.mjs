@@ -98,6 +98,7 @@ assert.doesNotMatch(markup, /data-token="\{mem\}"/)
 assert.doesNotMatch(markup, /data-token="\{disk\}"/)
 assert.match(source, /cpu_free:/)
 assert.doesNotMatch(source, /cpu_idle:/)
+assert.match(source, /if \(!total \|\| used == null\)/, 'memory preview must not treat missing used bytes as 0')
 
 const registrations = []
 const vue = new Proxy({}, {
