@@ -33,13 +33,6 @@
       "zh": {"name": "OLED 显示", "description": "NanoKVM OLED 状态显示服务。"},
       "zh-TW": {"name": "OLED 顯示", "description": "NanoKVM OLED 狀態顯示服務。"}
     }
-  }, {
-    "id": "assets",
-    "i18n": {
-      "default": {"name": "OLED animation assets", "description": "Remote OLED animation asset storage."},
-      "zh": {"name": "OLED 动图素材", "description": "远程保存 OLED 动图素材。"},
-      "zh-TW": {"name": "OLED 動圖素材", "description": "遠端儲存 OLED 動圖素材。"}
-    }
   }],
   "page": {
     "title": "OLED",
