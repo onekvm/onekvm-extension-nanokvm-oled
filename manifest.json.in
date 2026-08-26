@@ -27,11 +27,11 @@
   "routes": [{"path":"assets","backend":"unix","socket":"assets.sock","auth":"session"}],
   "capabilities": [],
   "services": [{
-    "id": "display",
+    "id": "oled",
     "i18n": {
-      "default": {"name": "OLED display", "description": "NanoKVM OLED status display service."},
-      "zh": {"name": "OLED 显示", "description": "NanoKVM OLED 状态显示服务。"},
-      "zh-TW": {"name": "OLED 顯示", "description": "NanoKVM OLED 狀態顯示服務。"}
+      "default": {"name": "NanoKVM OLED", "description": "OLED display and animation assets."},
+      "zh": {"name": "NanoKVM OLED", "description": "OLED 显示与动图素材。"},
+      "zh-TW": {"name": "NanoKVM OLED", "description": "OLED 顯示與動圖素材。"}
     }
   }],
   "page": {
