@@ -589,12 +589,25 @@ bool runDisplay(const Options &options, std::string &error) {
     return true;
   };
   refreshLiveFrames();
+  std::optional<OledAlert> currentAlert;
+  auto alertDeadline = Clock::time_point::max();
+  auto displayConfig = [&](const Config &base) {
+    if (!currentAlert.has_value())
+      return base;
+    Config overlay = base;
+    overlay.enabled = true;
+    overlay.layout =
+        layoutFromAlert(currentAlert->title, currentAlert->body,
+                        overlay.rotation, profile.width, profile.height);
+    return overlay;
+  };
   auto apply = [&](const Config &nextConfigValue, const Status &nextStatus,
                    bool settingsChanged, bool forceShow = false) -> bool {
-    Canvas nextFrame = renderDisplayFrame(nextConfigValue, nextStatus,
+    const Config visibleConfig = displayConfig(nextConfigValue);
+    Canvas nextFrame = renderDisplayFrame(visibleConfig, nextStatus,
                                           liveIndicatorOn);
     const bool frameChanged = forceShow || !(nextFrame == lastFrame);
-    if (!nextConfigValue.enabled) {
+    if (!visibleConfig.enabled) {
       if (awake && !device.off(error))
         return false;
       awake = false;
@@ -613,7 +626,7 @@ bool runDisplay(const Options &options, std::string &error) {
           return false;
         displayedFrame = Canvas(profile.width, profile.height);
       }
-      if (!nextConfigValue.burnInProtection)
+      if (!visibleConfig.burnInProtection)
         shiftIndex = 0;
       const int dx = shifts[static_cast<std::size_t>(shiftIndex)].first;
       const int dy = shifts[static_cast<std::size_t>(shiftIndex)].second;
@@ -645,6 +658,33 @@ bool runDisplay(const Options &options, std::string &error) {
   while (!stopped.load()) {
     if (!source.process(error))
       return false;
+    OledAlert nextAlert;
+    if (source.takeAlert(nextAlert)) {
+      currentAlert = std::move(nextAlert);
+      if (currentAlert->ttl_ms == 0)
+        alertDeadline = Clock::time_point::max();
+      else
+        alertDeadline = Clock::now() +
+                        std::chrono::milliseconds(currentAlert->ttl_ms);
+      if (!apply(config, status, true, true))
+        return false;
+    }
+    std::string dismissedId;
+    if (source.takeDismiss(dismissedId)) {
+      if (currentAlert.has_value() &&
+          (dismissedId.empty() || dismissedId == currentAlert->id)) {
+        currentAlert.reset();
+        alertDeadline = Clock::time_point::max();
+        if (!apply(config, status, true, true))
+          return false;
+      }
+    }
+    if (currentAlert.has_value() && Clock::now() >= alertDeadline) {
+      currentAlert.reset();
+      alertDeadline = Clock::time_point::max();
+      if (!apply(config, status, true, true))
+        return false;
+    }
     Status nextStatus;
     if (source.take(nextStatus)) {
       if (nextStatus.active != status.active)
@@ -750,7 +790,7 @@ bool runDisplay(const Options &options, std::string &error) {
       nextLiveBlink = now + 1s;
     }
     if (now >= nextSleep) {
-      if (awake && config.sleepSeconds > 0 &&
+      if (awake && config.sleepSeconds > 0 && !currentAlert.has_value() &&
           now - lastChange >= std::chrono::seconds(config.sleepSeconds)) {
         if (!device.off(error))
           return false;
@@ -760,7 +800,8 @@ bool runDisplay(const Options &options, std::string &error) {
       nextSleep = now + 1s;
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
-                                    nextLiveBlink, nextPlayback, nextAnimation});
+                                    nextLiveBlink, nextPlayback, nextAnimation,
+                                    alertDeadline});
     /* ProtectClock makes CLOCK_MONOTONIC nanosleep ~50 ms. poll(2)
      * takes a relative millisecond timeout and stays on 33 ms. */
     if (nextWake != nextAnimation &&

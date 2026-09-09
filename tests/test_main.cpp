@@ -81,6 +81,10 @@ int main() {
   unshifted.shift(0, 0);
   assert(unshifted == latinFont);
   Layout cubeLegacy = layoutFromLines({"1", "2", "3", "4"}, 0, 128, 64);
+  Layout alertLayout = layoutFromAlert("OneKVM", "Press BOOT", 0, 128, 64);
+  assert(alertLayout.elements.size() == 4);
+  assert(alertLayout.elements[0].text == "OneKVM");
+  assert(alertLayout.elements[1].text == "Press BOOT");
   assert(cubeLegacy.elements[0].y == 1 && cubeLegacy.elements[1].y == 17 &&
          cubeLegacy.elements[3].y == 49);
   Layout cubeLayout;

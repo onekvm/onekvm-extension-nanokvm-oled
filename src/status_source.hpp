@@ -1,5 +1,6 @@
 #pragma once
 
+#include "json.hpp"
 #include "runtime.hpp"
 #include "types.hpp"
 
@@ -21,6 +22,8 @@ public:
   ~StateSource() {
     sd_bus_slot_unref(statusSlot_);
     sd_bus_slot_unref(ownerSlot_);
+    sd_bus_slot_unref(alertSlot_);
+    sd_bus_slot_unref(dismissSlot_);
     sd_bus_unref(bus_);
   }
 
@@ -44,6 +47,20 @@ public:
                               &StateSource::onOwner, this);
     if (result < 0)
       return busError("subscribe Core ownership", result, error);
+    const std::string alertMatch =
+        "type='signal',path='" + std::string(kOledPath) + "',interface='" +
+        std::string(kOledInterface) + "',member='Alert'";
+    result = sd_bus_add_match(bus_, &alertSlot_, alertMatch.c_str(),
+                              &StateSource::onAlert, this);
+    if (result < 0)
+      return busError("subscribe OLED alerts", result, error);
+    const std::string dismissMatch =
+        "type='signal',path='" + std::string(kOledPath) + "',interface='" +
+        std::string(kOledInterface) + "',member='Dismissed'";
+    result = sd_bus_add_match(bus_, &dismissSlot_, dismissMatch.c_str(),
+                              &StateSource::onDismissed, this);
+    if (result < 0)
+      return busError("subscribe OLED dismissals", result, error);
     fetch(error);
     return true;
   }
@@ -104,6 +121,22 @@ public:
     return true;
   }
 
+  bool takeAlert(OledAlert &output) {
+    if (!alertUpdated_)
+      return false;
+    alertUpdated_ = false;
+    output = alert_;
+    return true;
+  }
+
+  bool takeDismiss(std::string &id) {
+    if (!dismissUpdated_)
+      return false;
+    dismissUpdated_ = false;
+    id = dismissedId_;
+    return true;
+  }
+
 private:
   static int onStatus(sd_bus_message *message, void *userdata, sd_bus_error *) {
     auto *source = static_cast<StateSource *>(userdata);
@@ -134,6 +167,46 @@ private:
       std::string ignored;
       source->fetch(ignored);
     }
+    return 0;
+  }
+
+  static int onAlert(sd_bus_message *message, void *userdata, sd_bus_error *) {
+    auto *source = static_cast<StateSource *>(userdata);
+    const char *id = nullptr;
+    const char *payload = nullptr;
+    if (sd_bus_message_read(message, "ss", &id, &payload) < 0 ||
+        id == nullptr || payload == nullptr)
+      return 0;
+    Json document;
+    std::string error;
+    if (!parseJSON(payload, document, error) ||
+        document.type != Json::Type::Object)
+      return 0;
+    OledAlert alert;
+    alert.id = id;
+    if (!jsonString(document, "title", {}, alert.title, error))
+      alert.title.clear();
+    if (!jsonString(document, "body", {}, alert.body, error))
+      alert.body.clear();
+    int ttl = 0;
+    if (!jsonInt(document, "ttl_ms", 0, ttl, error) || ttl < 0)
+      ttl = 0;
+    alert.ttl_ms = static_cast<uint32_t>(ttl);
+    if (alert.title.empty() && alert.body.empty())
+      return 0;
+    source->alert_ = std::move(alert);
+    source->alertUpdated_ = true;
+    return 0;
+  }
+
+  static int onDismissed(sd_bus_message *message, void *userdata,
+                         sd_bus_error *) {
+    auto *source = static_cast<StateSource *>(userdata);
+    const char *id = nullptr;
+    if (sd_bus_message_read(message, "s", &id) < 0 || id == nullptr)
+      return 0;
+    source->dismissedId_ = id;
+    source->dismissUpdated_ = true;
     return 0;
   }
 
@@ -180,9 +253,15 @@ private:
   sd_bus *bus_ = nullptr;
   sd_bus_slot *statusSlot_ = nullptr;
   sd_bus_slot *ownerSlot_ = nullptr;
+  sd_bus_slot *alertSlot_ = nullptr;
+  sd_bus_slot *dismissSlot_ = nullptr;
   Status status_;
+  OledAlert alert_;
+  std::string dismissedId_;
   bool available_ = false;
   bool updated_ = false;
+  bool alertUpdated_ = false;
+  bool dismissUpdated_ = false;
   Clock::time_point retryAt_{};
 };
 

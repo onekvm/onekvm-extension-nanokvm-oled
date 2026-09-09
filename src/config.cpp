@@ -92,6 +92,12 @@ Layout layoutFromLines(std::array<std::string, 4> lines, int rotation,
   return layout;
 }
 
+Layout layoutFromAlert(std::string_view title, std::string_view body,
+                       int rotation, int displayWidth, int displayHeight) {
+  return layoutFromLines({std::string(title), std::string(body), "", ""},
+                         rotation, displayWidth, displayHeight);
+}
+
 Layout pcieDefaultLayout() {
   Layout layout;
 

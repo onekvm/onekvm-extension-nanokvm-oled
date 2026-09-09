@@ -27,6 +27,15 @@ inline constexpr std::string_view kCoreBusName = "org.onekvm.Core1";
 inline constexpr std::string_view kStatusPath = "/org/onekvm/Core1/Status";
 inline constexpr std::string_view kStatusInterface =
     "org.onekvm.Core1.Status";
+inline constexpr std::string_view kOledPath = "/org/onekvm/Core1/Oled";
+inline constexpr std::string_view kOledInterface = "org.onekvm.Core1.Oled";
+
+struct OledAlert {
+  std::string id;
+  std::string title;
+  std::string body;
+  uint32_t ttl_ms = 0;
+};
 
 struct DisplayProfile {
   std::string variant = "pcie";

@@ -15,6 +15,9 @@ bool displayProfileForVariant(std::string_view variant,
 Layout layoutFromLines(std::array<std::string, 4> lines, int rotation,
                        int displayWidth = kPcieWidth,
                        int displayHeight = kPcieHeight);
+Layout layoutFromAlert(std::string_view title, std::string_view body,
+                       int rotation, int displayWidth = kPcieWidth,
+                       int displayHeight = kPcieHeight);
 Layout pcieDefaultLayout();
 Layout cubeDefaultLayout();
 bool parseLayout(std::string_view raw,
