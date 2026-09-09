@@ -48,19 +48,19 @@ public:
     if (result < 0)
       return busError("subscribe Core ownership", result, error);
     const std::string alertMatch =
-        "type='signal',path='" + std::string(kOledPath) + "',interface='" +
-        std::string(kOledInterface) + "',member='Alert'";
+        "type='signal',path='" + std::string(kScreenPath) + "',interface='" +
+        std::string(kScreenInterface) + "',member='Alert'";
     result = sd_bus_add_match(bus_, &alertSlot_, alertMatch.c_str(),
                               &StateSource::onAlert, this);
     if (result < 0)
-      return busError("subscribe OLED alerts", result, error);
+      return busError("subscribe screen alerts", result, error);
     const std::string dismissMatch =
-        "type='signal',path='" + std::string(kOledPath) + "',interface='" +
-        std::string(kOledInterface) + "',member='Dismissed'";
+        "type='signal',path='" + std::string(kScreenPath) + "',interface='" +
+        std::string(kScreenInterface) + "',member='Dismissed'";
     result = sd_bus_add_match(bus_, &dismissSlot_, dismissMatch.c_str(),
                               &StateSource::onDismissed, this);
     if (result < 0)
-      return busError("subscribe OLED dismissals", result, error);
+      return busError("subscribe screen dismissals", result, error);
     fetch(error);
     return true;
   }

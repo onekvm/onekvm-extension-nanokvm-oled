@@ -27,8 +27,8 @@ inline constexpr std::string_view kCoreBusName = "org.onekvm.Core1";
 inline constexpr std::string_view kStatusPath = "/org/onekvm/Core1/Status";
 inline constexpr std::string_view kStatusInterface =
     "org.onekvm.Core1.Status";
-inline constexpr std::string_view kOledPath = "/org/onekvm/Core1/Oled";
-inline constexpr std::string_view kOledInterface = "org.onekvm.Core1.Oled";
+inline constexpr std::string_view kScreenPath = "/org/onekvm/Screen";
+inline constexpr std::string_view kScreenInterface = "org.onekvm.Screen";
 
 struct OledAlert {
   std::string id;
