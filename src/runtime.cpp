@@ -733,6 +733,9 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
+      if (currentAlert.has_value()) {
+        nextAnimation = Clock::now() + 33ms;
+      } else {
       /* Period is 33 ms including render+show. Do not sleep another 33 ms
        * after apply, and do not use D-Bus poll for the remainder: a
        * readable bus fd would cut the wait, a 20 Hz signal would stretch
@@ -751,9 +754,11 @@ bool runDisplay(const Options &options, std::string &error) {
           (void)::poll(nullptr, 0, timeoutMs);
       }
       nextAnimation = Clock::now();
+      }
     }
     if (now >= nextShift) {
-      if (awake && config.enabled && config.burnInProtection) {
+      if (!currentAlert.has_value() && awake && config.enabled &&
+          config.burnInProtection) {
         shiftIndex = (shiftIndex + 1) % 4;
         Canvas visible = liveFrames.has_value()
                              ? (*liveFrames)[static_cast<std::size_t>(shiftIndex)]
@@ -768,7 +773,8 @@ bool runDisplay(const Options &options, std::string &error) {
       nextShift = now + options.shiftInterval;
     }
     if (now >= nextLiveBlink) {
-      if (config.enabled && status.active && hasLiveLayer(config)) {
+      if (!currentAlert.has_value() && config.enabled && status.active &&
+          hasLiveLayer(config)) {
         liveIndicatorOn = !liveIndicatorOn;
         if (!liveFrames.has_value())
           refreshLiveFrames();

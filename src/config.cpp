@@ -1,5 +1,6 @@
 #include "config.hpp"
 
+#include "font.hpp"
 #include "json.hpp"
 
 #include <algorithm>
@@ -92,10 +93,87 @@ Layout layoutFromLines(std::array<std::string, 4> lines, int rotation,
   return layout;
 }
 
+static void pushWrappedLine(std::vector<std::string> &lines, std::string line,
+                            int maxWidth) {
+  while (!line.empty() && lines.size() < 4) {
+    if (textPixelWidth(line, 1) <= maxWidth) {
+      lines.push_back(std::move(line));
+      return;
+    }
+    std::size_t index = 0;
+    std::size_t cut = 0;
+    uint32_t codepoint = 0;
+    int width = 0;
+    while (nextCodepoint(line, index, codepoint)) {
+      const int glyph =
+          (isCJK(codepoint) ? 13 : asciiGlyphWidth(codepoint, 4) + 1);
+      if (cut > 0 && width + glyph > maxWidth)
+        break;
+      width += glyph;
+      cut = index;
+    }
+    if (cut == 0)
+      cut = line.size();
+    lines.push_back(line.substr(0, cut));
+    line.erase(0, cut);
+    while (!line.empty() && line.front() == ' ')
+      line.erase(line.begin());
+  }
+}
+
+static void wrapAlertText(std::vector<std::string> &lines, std::string_view text,
+                          int maxWidth) {
+  std::string current;
+  std::size_t index = 0;
+  while (index < text.size() && lines.size() < 4) {
+    if (text[index] == ' ' || text[index] == '\n') {
+      if (text[index] == '\n' && !current.empty()) {
+        pushWrappedLine(lines, std::move(current), maxWidth);
+        current.clear();
+      }
+      ++index;
+      continue;
+    }
+    std::size_t wordStart = index;
+    while (index < text.size() && text[index] != ' ' && text[index] != '\n')
+      ++index;
+    const std::string word(text.substr(wordStart, index - wordStart));
+    const std::string candidate =
+        current.empty() ? word : current + " " + word;
+    if (textPixelWidth(candidate, 1) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+    if (!current.empty()) {
+      pushWrappedLine(lines, std::move(current), maxWidth);
+      current.clear();
+    }
+    if (textPixelWidth(word, 1) <= maxWidth)
+      current = word;
+    else
+      pushWrappedLine(lines, word, maxWidth);
+  }
+  if (!current.empty() && lines.size() < 4)
+    pushWrappedLine(lines, std::move(current), maxWidth);
+}
+
 Layout layoutFromAlert(std::string_view title, std::string_view body,
                        int rotation, int displayWidth, int displayHeight) {
-  return layoutFromLines({std::string(title), std::string(body), "", ""},
-                         rotation, displayWidth, displayHeight);
+  const int logicalWidth =
+      rotation == 90 || rotation == 270 ? displayHeight : displayWidth;
+  const int maxWidth = std::max(8, logicalWidth - 4);
+  std::vector<std::string> lines;
+  if (!title.empty())
+    pushWrappedLine(lines, std::string(title), maxWidth);
+  wrapAlertText(lines, body, maxWidth);
+  while (lines.size() < 4)
+    lines.emplace_back();
+  Layout layout = layoutFromLines(
+      {lines[0], lines[1], lines[2], lines[3]}, rotation, displayWidth,
+      displayHeight);
+  for (Element &element : layout.elements)
+    element.fullWidth = true;
+  return layout;
 }
 
 Layout pcieDefaultLayout() {

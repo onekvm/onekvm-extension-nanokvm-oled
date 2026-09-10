@@ -85,6 +85,12 @@ int main() {
   assert(alertLayout.elements.size() == 4);
   assert(alertLayout.elements[0].text == "OneKVM");
   assert(alertLayout.elements[1].text == "Press BOOT");
+  Layout pcieAlert =
+      layoutFromAlert("OneKVM", "Press BOOT to confirm", 0, 64, 32);
+  assert(pcieAlert.elements[0].text == "OneKVM");
+  assert(pcieAlert.elements[1].text == "Press BOOT");
+  assert(pcieAlert.elements[2].text == "to confirm");
+  assert(pcieAlert.elements[0].fullWidth && pcieAlert.elements[1].fullWidth);
   assert(cubeLegacy.elements[0].y == 1 && cubeLegacy.elements[1].y == 17 &&
          cubeLegacy.elements[3].y == 49);
   Layout cubeLayout;
