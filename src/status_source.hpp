@@ -184,6 +184,9 @@ private:
       return 0;
     OledAlert alert;
     alert.id = id;
+    std::string ignored;
+    if (!jsonString(document, "kind", {}, alert.kind, ignored))
+      alert.kind.clear();
     if (!jsonString(document, "title", {}, alert.title, error))
       alert.title.clear();
     if (!jsonString(document, "body", {}, alert.body, error))
@@ -192,7 +195,7 @@ private:
     if (!jsonInt(document, "ttl_ms", 0, ttl, error) || ttl < 0)
       ttl = 0;
     alert.ttl_ms = static_cast<uint32_t>(ttl);
-    if (alert.title.empty() && alert.body.empty())
+    if (alert.kind.empty() && alert.title.empty() && alert.body.empty())
       return 0;
     source->alert_ = std::move(alert);
     source->alertUpdated_ = true;

@@ -596,9 +596,8 @@ bool runDisplay(const Options &options, std::string &error) {
       return base;
     Config overlay = base;
     overlay.enabled = true;
-    overlay.layout =
-        layoutFromAlert(currentAlert->title, currentAlert->body,
-                        overlay.rotation, profile.width, profile.height);
+    overlay.layout = layoutForScreenAlert(
+        *currentAlert, overlay.rotation, profile.width, profile.height);
     return overlay;
   };
   auto apply = [&](const Config &nextConfigValue, const Status &nextStatus,

@@ -176,6 +176,58 @@ Layout layoutFromAlert(std::string_view title, std::string_view body,
   return layout;
 }
 
+bool isBootConfirmAlert(std::string_view kind, std::string_view title,
+                        std::string_view body) {
+  if (kind == "boot-confirm")
+    return true;
+  /* Core v1 alert_json has no kind; boot-confirm sends this English payload. */
+  return title == "OneKVM" &&
+         body.find("Press BOOT") != std::string_view::npos;
+}
+
+Layout layoutFromBootConfirm(int rotation, int displayWidth,
+                             int displayHeight) {
+  const int logicalWidth =
+      rotation == 90 || rotation == 270 ? displayHeight : displayWidth;
+  const int logicalHeight =
+      rotation == 90 || rotation == 270 ? displayWidth : displayHeight;
+  const bool compact = logicalWidth < 52;
+  const std::array<std::string_view, 4> compactLines{
+      "确认", "登录", "短按", "BOOT"};
+  const std::array<std::string_view, 2> wideLines{"确认登录", "短按BOOT"};
+  const std::size_t count = compact ? 4 : 2;
+  const int barHeight = 14;
+  const int gap = compact ? 1 : 2;
+  const int block = static_cast<int>(count) * barHeight +
+                    static_cast<int>(count - 1) * gap;
+  int y = std::max(0, (logicalHeight - block) / 2);
+  Layout layout;
+  for (std::size_t index = 0; index < count; ++index) {
+    Element bar;
+    bar.id = "confirm" + std::to_string(index + 1);
+    bar.type = "rect";
+    bar.x = 0;
+    bar.y = y;
+    bar.width = logicalWidth;
+    bar.height = barHeight;
+    bar.filled = true;
+    bar.text = std::string(compact ? compactLines[index] : wideLines[index]);
+    bar.scale = 1;
+    bar.align = "center";
+    layout.elements.push_back(std::move(bar));
+    y += barHeight + gap;
+  }
+  return layout;
+}
+
+Layout layoutForScreenAlert(const OledAlert &alert, int rotation,
+                            int displayWidth, int displayHeight) {
+  if (isBootConfirmAlert(alert.kind, alert.title, alert.body))
+    return layoutFromBootConfirm(rotation, displayWidth, displayHeight);
+  return layoutFromAlert(alert.title, alert.body, rotation, displayWidth,
+                         displayHeight);
+}
+
 Layout pcieDefaultLayout() {
   Layout layout;
 

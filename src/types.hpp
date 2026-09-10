@@ -32,6 +32,7 @@ inline constexpr std::string_view kScreenInterface = "org.onekvm.Screen";
 
 struct OledAlert {
   std::string id;
+  std::string kind;
   std::string title;
   std::string body;
   uint32_t ttl_ms = 0;

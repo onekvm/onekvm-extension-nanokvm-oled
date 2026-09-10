@@ -91,6 +91,58 @@ int main() {
   assert(pcieAlert.elements[1].text == "Press BOOT");
   assert(pcieAlert.elements[2].text == "to confirm");
   assert(pcieAlert.elements[0].fullWidth && pcieAlert.elements[1].fullWidth);
+  assert(isBootConfirmAlert("boot-confirm", "", ""));
+  assert(isBootConfirmAlert("", "OneKVM", "Press BOOT to confirm"));
+  assert(!isBootConfirmAlert("", "Error", "disk full"));
+  Layout pcieConfirm = layoutFromBootConfirm(0, 64, 32);
+  assert(pcieConfirm.elements.size() == 2);
+  assert(pcieConfirm.elements[0].type == "rect");
+  assert(pcieConfirm.elements[0].filled);
+  assert(pcieConfirm.elements[0].align == "center");
+  assert(pcieConfirm.elements[0].text == "确认登录");
+  assert(pcieConfirm.elements[1].text == "短按BOOT");
+  assert(pcieConfirm.elements[0].width == 64);
+  Layout rotatedConfirm = layoutFromBootConfirm(90, 64, 32);
+  assert(rotatedConfirm.elements.size() == 4);
+  assert(rotatedConfirm.elements[0].text == "确认");
+  assert(rotatedConfirm.elements[3].text == "BOOT");
+  assert(rotatedConfirm.elements[0].width == 32);
+  OledAlert bootAlert;
+  bootAlert.title = "OneKVM";
+  bootAlert.body = "Press BOOT to confirm";
+  Layout fromPayload = layoutForScreenAlert(bootAlert, 0, 64, 32);
+  assert(fromPayload.elements.size() == 2);
+  assert(fromPayload.elements[0].text == "确认登录");
+  OledAlert genericAlert;
+  genericAlert.title = "Error";
+  genericAlert.body = "disk full";
+  Layout genericLayout = layoutForScreenAlert(genericAlert, 0, 64, 32);
+  assert(genericLayout.elements[0].text == "Error");
+  assert(genericLayout.elements[1].text == "disk full");
+  {
+    Config confirmConfig;
+    confirmConfig.enabled = true;
+    confirmConfig.layout = pcieConfirm;
+    Canvas confirmFrame = render(confirmConfig, Status{}, true, 64, 32);
+    int on = 0;
+    for (int y = 0; y < 32; ++y)
+      for (int x = 0; x < 64; ++x)
+        if (confirmFrame.at(x, y))
+          ++on;
+    assert(on > 400);
+    const int barY = pcieConfirm.elements[0].y;
+    bool barOn = false;
+    bool barOff = false;
+    for (int x = 0; x < 64; ++x) {
+      for (int row = 0; row < 14; ++row) {
+        if (confirmFrame.at(x, barY + row))
+          barOn = true;
+        else
+          barOff = true;
+      }
+    }
+    assert(confirmFrame.at(0, barY) && barOn && barOff);
+  }
   assert(cubeLegacy.elements[0].y == 1 && cubeLegacy.elements[1].y == 17 &&
          cubeLegacy.elements[3].y == 49);
   Layout cubeLayout;

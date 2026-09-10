@@ -18,6 +18,13 @@ Layout layoutFromLines(std::array<std::string, 4> lines, int rotation,
 Layout layoutFromAlert(std::string_view title, std::string_view body,
                        int rotation, int displayWidth = kPcieWidth,
                        int displayHeight = kPcieHeight);
+bool isBootConfirmAlert(std::string_view kind, std::string_view title,
+                        std::string_view body);
+Layout layoutFromBootConfirm(int rotation, int displayWidth = kPcieWidth,
+                             int displayHeight = kPcieHeight);
+Layout layoutForScreenAlert(const OledAlert &alert, int rotation,
+                            int displayWidth = kPcieWidth,
+                            int displayHeight = kPcieHeight);
 Layout pcieDefaultLayout();
 Layout cubeDefaultLayout();
 bool parseLayout(std::string_view raw,

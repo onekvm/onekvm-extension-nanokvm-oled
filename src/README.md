@@ -10,7 +10,7 @@ The OLED runtime is split by responsibility so each part can be read and changed
 | `status_source.hpp` | D-Bus subscription and status refresh handling |
 | `status.cpp` | Decoding Core status payloads |
 | `controller.cpp` | OneKVM extension lifecycle action planning |
-| `config.cpp` | Device profiles, settings, layouts, and defaults |
+| `config.cpp` | Device profiles, settings, layouts, defaults, and Screen alert overlays |
 | `json.cpp` | Small JSON parser used by runtime inputs |
 | `renderer.cpp` | Turning a layout and live status into a frame |
 | `canvas.hpp` | Pixel drawing, rotation, text, shapes, and bitmaps |
