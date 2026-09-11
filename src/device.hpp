@@ -115,6 +115,7 @@ public:
   bool usesRtos() const { return rtos_; }
 
   bool off(std::string &error) {
+    posted_valid_ = false;
     if (rtos_) {
       if (::ioctl(descriptor_, _IO('O', 5), 0) < 0) {
         error = "OLED off: " + std::string(std::strerror(errno));
@@ -134,18 +135,36 @@ public:
       ::close(descriptor_);
     descriptor_ = -1;
     rtos_ = false;
+    posted_valid_ = false;
   }
 
 private:
+  std::size_t frameBytes() const {
+    return static_cast<std::size_t>(profile_.width) *
+           static_cast<std::size_t>(profile_.height / 8);
+  }
+
+  /* Silence is zero CMD_FRAME writes. Identical pixels must not touch
+   * /dev/onekvm-oled, even if the caller already decided to show(). */
   bool writeRtosFrame(const Canvas &canvas, std::string &error) {
     const auto &frame = canvas.data();
-    const ssize_t written =
-        ::write(descriptor_, frame.data(), frame.size());
-    if (written != static_cast<ssize_t>(frame.size())) {
+    const std::size_t bytes = frameBytes();
+    if (bytes == 0 || bytes > frame.size()) {
+      error = "write OLED: invalid frame size";
+      return false;
+    }
+    if (posted_valid_ && posted_bytes_ == bytes &&
+        std::memcmp(posted_.data(), frame.data(), bytes) == 0)
+      return true;
+    const ssize_t written = ::write(descriptor_, frame.data(), bytes);
+    if (written != static_cast<ssize_t>(bytes)) {
       error = "write OLED: " +
               std::string(written < 0 ? std::strerror(errno) : "short write");
       return false;
     }
+    std::memcpy(posted_.data(), frame.data(), bytes);
+    posted_bytes_ = bytes;
+    posted_valid_ = true;
     return true;
   }
 
@@ -170,6 +189,9 @@ private:
   DisplayProfile profile_;
   int descriptor_ = -1;
   bool rtos_ = false;
+  std::array<uint8_t, kMaxFrameBytes> posted_{};
+  std::size_t posted_bytes_ = 0;
+  bool posted_valid_ = false;
 };
 
 bool openDisplay(Device &device, const std::string &path, int address,

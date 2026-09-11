@@ -555,7 +555,6 @@ bool runDisplay(const Options &options, std::string &error) {
                                                      : Clock::time_point::max();
   auto nextShift = Clock::now() + options.shiftInterval;
   auto nextSleep = Clock::now() + 1s;
-  auto nextLiveBlink = Clock::now() + 1s;
   const char *extensionData = std::getenv("ONEKVM_EXTENSION_DATA");
   const std::filesystem::path requestPath = extensionData != nullptr
       ? std::filesystem::path(extensionData) / ".play.request"
@@ -585,6 +584,8 @@ bool runDisplay(const Options &options, std::string &error) {
     liveFrames = std::move(cache);
   };
   auto showVisible = [&](const Canvas &visible) -> bool {
+    if (displayedFrame.has_value() && *displayedFrame == visible)
+      return true;
     if (displayedFrame.has_value()) {
       if (!device.showChanged(*displayedFrame, visible, error))
         return false;
@@ -592,6 +593,7 @@ bool runDisplay(const Options &options, std::string &error) {
       return false;
     }
     displayedFrame = visible;
+    lastChange = Clock::now();
     return true;
   };
   refreshLiveFrames();
@@ -635,7 +637,6 @@ bool runDisplay(const Options &options, std::string &error) {
           return false;
       }
       awake = true;
-      lastChange = Clock::now();
     }
     config = nextConfigValue;
     status = nextStatus;
@@ -790,31 +791,11 @@ bool runDisplay(const Options &options, std::string &error) {
       }
       nextShift = now + options.shiftInterval;
     }
-    if (now >= nextLiveBlink) {
-      if (!currentAlert.has_value() && config.enabled && status.active &&
-          hasLiveLayer(config)) {
-        liveIndicatorOn = !liveIndicatorOn;
-        if (!liveFrames.has_value())
-          refreshLiveFrames();
-        const Canvas &animated =
-            (*liveFrames)[0][liveIndicatorOn ? 1U : 0U];
-        if (!awake && !device.initialize(error))
-          return false;
-        if (!awake)
-          displayedFrame = Canvas(profile.width, profile.height);
-        const Canvas &visible =
-            (*liveFrames)[static_cast<std::size_t>(shiftIndex)]
-                         [liveIndicatorOn ? 1U : 0U];
-        if (!showVisible(visible))
-          return false;
-        awake = true;
-        lastFrame = animated;
-        lastChange = now;
-      }
-      nextLiveBlink = now + 1s;
-    }
     if (now >= nextSleep) {
+      /* A live HDMI session is not idle. Do not write frames just to
+       * keep lastChange fresh; skip auto-off while video is active. */
       if (awake && config.sleepSeconds > 0 && !currentAlert.has_value() &&
+          !status.active &&
           now - lastChange >= std::chrono::seconds(config.sleepSeconds)) {
         if (!device.off(error))
           return false;
@@ -824,8 +805,7 @@ bool runDisplay(const Options &options, std::string &error) {
       nextSleep = now + 1s;
     }
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
-                                    nextLiveBlink, nextPlayback, nextAnimation,
-                                    alertDeadline});
+                                    nextPlayback, nextAnimation, alertDeadline});
     /* Animation already waited its remainder. Do not sleep that interval
      * again; other timers still wait on the bus fd. */
     if (nextWake != nextAnimation &&

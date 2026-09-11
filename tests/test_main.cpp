@@ -319,6 +319,8 @@ int main() {
   }
   assert(changedPages <= 2 && changedBytes <= 6);
   assert(!changedColumns(liveDotOn, liveDotOn, 0, 64).has_value());
+  assert(liveDotOn == liveDotOn);
+  assert(!(liveDotOn == liveDotOff));
   extendedStatus.active = false;
   Canvas inactiveLive = render(extendedStatusConfig, extendedStatus, true);
   assert(!inactiveLive.at(20, 20) && !inactiveLive.at(45, 20) &&
