@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <poll.h>
 #include <string>
@@ -177,26 +178,17 @@ private:
     if (sd_bus_message_read(message, "ss", &id, &payload) < 0 ||
         id == nullptr || payload == nullptr)
       return 0;
-    Json document;
-    std::string error;
-    if (!parseJSON(payload, document, error) ||
-        document.type != Json::Type::Object)
-      return 0;
     OledAlert alert;
     alert.id = id;
-    std::string ignored;
-    if (!jsonString(document, "kind", {}, alert.kind, ignored))
-      alert.kind.clear();
-    if (!jsonString(document, "title", {}, alert.title, error))
-      alert.title.clear();
-    if (!jsonString(document, "body", {}, alert.body, error))
-      alert.body.clear();
-    int ttl = 0;
-    if (!jsonInt(document, "ttl_ms", 0, ttl, error) || ttl < 0)
-      ttl = 0;
-    alert.ttl_ms = static_cast<uint32_t>(ttl);
-    if (alert.kind.empty() && alert.title.empty() && alert.body.empty())
+    std::string error;
+    if (!decodeScreenAlert(payload, alert.kind, alert.title, alert.body,
+                           alert.ttl_ms, error)) {
+      std::fprintf(stderr, "onekvm-nanokvm-oled: ignore screen alert: %s\n",
+                   error.c_str());
       return 0;
+    }
+    std::fprintf(stderr, "onekvm-nanokvm-oled: screen alert %s kind=%s title=%s\n",
+                 alert.id.c_str(), alert.kind.c_str(), alert.title.c_str());
     source->alert_ = std::move(alert);
     source->alertUpdated_ = true;
     return 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <string_view>
@@ -33,6 +34,9 @@ bool jsonInt(const Json &object, std::string_view key, int fallback,
 bool jsonString(const Json &object, std::string_view key, std::string fallback,
                 std::string &output, std::string &error,
                 bool nullable = false);
+bool decodeScreenAlert(std::string_view payload, std::string &kind,
+                       std::string &title, std::string &body, uint32_t &ttl_ms,
+                       std::string &error);
 std::size_t utf8Length(std::string_view value);
 
 } // namespace onekvm::oled

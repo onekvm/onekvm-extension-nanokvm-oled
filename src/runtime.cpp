@@ -659,6 +659,8 @@ bool runDisplay(const Options &options, std::string &error) {
       return false;
     OledAlert nextAlert;
     if (source.takeAlert(nextAlert)) {
+      std::cerr << "onekvm-nanokvm-oled: show screen alert " << nextAlert.id
+                << '\n';
       currentAlert = std::move(nextAlert);
       if (currentAlert->ttl_ms == 0)
         alertDeadline = Clock::time_point::max();
@@ -732,28 +734,14 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
-      if (currentAlert.has_value()) {
-        nextAnimation = Clock::now() + 33ms;
-      } else {
-      /* Period is 33 ms including render+show. Do not sleep another 33 ms
-       * after apply, and do not use D-Bus poll for the remainder: a
-       * readable bus fd would cut the wait, a 20 Hz signal would stretch
-       * it. poll(0, timeout) is a relative millisecond sleep. */
-      animationTick++;
-      const auto frameStart = monotonicNow();
-      if (!apply(config, status, false, true))
-        return false;
-      constexpr auto kAnimationPeriod = 33ms;
-      const auto elapsed = monotonicNow() - frameStart;
-      if (elapsed < kAnimationPeriod) {
-        const int timeoutMs = static_cast<int>(std::chrono::duration_cast<
-            std::chrono::milliseconds>(kAnimationPeriod - elapsed)
-                                                   .count());
-        if (timeoutMs > 0)
-          (void)::poll(nullptr, 0, timeoutMs);
+      if (!currentAlert.has_value()) {
+        /* Drain D-Bus before the frame so Screen alerts are not stuck behind
+         * a poll(nullptr) sleep that ignores the bus fd. */
+        animationTick++;
+        if (!apply(config, status, false, true))
+          return false;
       }
-      nextAnimation = Clock::now();
-      }
+      nextAnimation = Clock::now() + 33ms;
     }
     if (now >= nextShift) {
       if (!currentAlert.has_value() && awake && config.enabled &&
@@ -807,10 +795,10 @@ bool runDisplay(const Options &options, std::string &error) {
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation,
                                     alertDeadline});
-    /* ProtectClock makes CLOCK_MONOTONIC nanosleep ~50 ms. poll(2)
-     * takes a relative millisecond timeout and stays on 33 ms. */
-    if (nextWake != nextAnimation &&
-        !source.waitUntil(nextWake, error))
+    /* Always wait on the bus fd. poll(nullptr) used to hide Screen alerts
+     * while the 33 ms animation sleep ran. Status at 20 Hz only shortens
+     * the wait; the next loop drains it and sleeps the remainder. */
+    if (!source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */

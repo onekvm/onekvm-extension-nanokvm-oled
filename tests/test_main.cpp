@@ -181,6 +181,20 @@ int main() {
   assert(
       parseJSON(R"({"text":"A\u0042","values":[1,true,null]})", json, error));
   assert(json.get("text") != nullptr && json.get("text")->string == "AB");
+  {
+    std::string kind, title, body, decodeError;
+    uint32_t ttl = 0;
+    assert(decodeScreenAlert(
+        R"({"title":"OneKVM","body":"Press BOOT to confirm","ttl_ms":120000})",
+        kind, title, body, ttl, decodeError));
+    assert(kind.empty() && title == "OneKVM" && ttl == 120000);
+    assert(isBootConfirmAlert(kind, title, body));
+    assert(decodeScreenAlert(R"({"kind":"boot-confirm","title":"x"})", kind,
+                             title, body, ttl, decodeError));
+    assert(kind == "boot-confirm" && isBootConfirmAlert(kind, title, body));
+    assert(!decodeScreenAlert(R"({"ttl_ms":1})", kind, title, body, ttl,
+                              decodeError));
+  }
 
   const std::string configJSON = R"({
       "display_enabled":true,"burn_in_protection":true,"rotation":270,"sleep_seconds":300,

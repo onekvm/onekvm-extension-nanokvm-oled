@@ -347,6 +347,35 @@ bool jsonString(const Json &object, std::string_view key, std::string fallback,
   return true;
 }
 
+bool decodeScreenAlert(std::string_view payload, std::string &kind,
+                       std::string &title, std::string &body, uint32_t &ttl_ms,
+                       std::string &error) {
+  Json document;
+  if (!parseJSON(payload, document, error) ||
+      document.type != Json::Type::Object) {
+    if (error.empty())
+      error = "screen alert JSON must be an object";
+    return false;
+  }
+  std::string ignored;
+  if (!jsonString(document, "kind", {}, kind, ignored))
+    kind.clear();
+  if (!jsonString(document, "title", {}, title, error))
+    title.clear();
+  if (!jsonString(document, "body", {}, body, error))
+    body.clear();
+  int ttl = 0;
+  if (!jsonInt(document, "ttl_ms", 0, ttl, error) || ttl < 0)
+    ttl = 0;
+  ttl_ms = static_cast<uint32_t>(ttl);
+  if (kind.empty() && title.empty() && body.empty()) {
+    error = "screen alert is empty";
+    return false;
+  }
+  error.clear();
+  return true;
+}
+
 std::size_t utf8Length(std::string_view value) {
   std::size_t count = 0;
   for (unsigned char byte : value)
