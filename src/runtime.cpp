@@ -653,37 +653,40 @@ bool runDisplay(const Options &options, std::string &error) {
       nextAnimation = Clock::now();
     return true;
   };
+  auto beginAlert = [&](OledAlert alert) -> bool {
+    std::cerr << "onekvm-nanokvm-oled: show screen alert " << alert.id << '\n';
+    currentAlert = std::move(alert);
+    if (currentAlert->ttl_ms == 0)
+      alertDeadline = Clock::time_point::max();
+    else
+      alertDeadline = Clock::now() +
+                      std::chrono::milliseconds(currentAlert->ttl_ms);
+    return apply(config, status, true, true);
+  };
+  auto endAlert = [&]() -> bool {
+    currentAlert.reset();
+    alertDeadline = Clock::time_point::max();
+    return apply(config, status, true, true);
+  };
 
   while (!stopped.load()) {
     if (!source.process(error))
       return false;
     OledAlert nextAlert;
     if (source.takeAlert(nextAlert)) {
-      std::cerr << "onekvm-nanokvm-oled: show screen alert " << nextAlert.id
-                << '\n';
-      currentAlert = std::move(nextAlert);
-      if (currentAlert->ttl_ms == 0)
-        alertDeadline = Clock::time_point::max();
-      else
-        alertDeadline = Clock::now() +
-                        std::chrono::milliseconds(currentAlert->ttl_ms);
-      if (!apply(config, status, true, true))
+      if (!beginAlert(std::move(nextAlert)))
         return false;
     }
     std::string dismissedId;
     if (source.takeDismiss(dismissedId)) {
       if (currentAlert.has_value() &&
           (dismissedId.empty() || dismissedId == currentAlert->id)) {
-        currentAlert.reset();
-        alertDeadline = Clock::time_point::max();
-        if (!apply(config, status, true, true))
+        if (!endAlert())
           return false;
       }
     }
     if (currentAlert.has_value() && Clock::now() >= alertDeadline) {
-      currentAlert.reset();
-      alertDeadline = Clock::time_point::max();
-      if (!apply(config, status, true, true))
+      if (!endAlert())
         return false;
     }
     Status nextStatus;
@@ -735,13 +738,45 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     if (now >= nextAnimation) {
       if (!currentAlert.has_value()) {
-        /* Drain D-Bus before the frame so Screen alerts are not stuck behind
-         * a poll(nullptr) sleep that ignores the bus fd. */
+        /* 33 ms includes render+show. Poll the bus for the remainder so a
+         * Screen alert can interrupt; 20 Hz Status only shortens this wait.
+         * Keep the leftover on CLOCK_MONOTONIC_RAW, not waitUntil(now+33ms). */
         animationTick++;
+        const auto frameStart = monotonicNow();
         if (!apply(config, status, false, true))
           return false;
+        constexpr auto kAnimationPeriod = 33ms;
+        while (!currentAlert.has_value()) {
+          const auto elapsed = monotonicNow() - frameStart;
+          if (elapsed >= kAnimationPeriod)
+            break;
+          const int remainMs = static_cast<int>(std::chrono::duration_cast<
+              std::chrono::milliseconds>(kAnimationPeriod - elapsed)
+                                                    .count());
+          if (remainMs <= 0)
+            break;
+          if (!source.waitRelativeMs(remainMs, error) ||
+              !source.process(error))
+            return false;
+          OledAlert frameAlert;
+          if (source.takeAlert(frameAlert) &&
+              !beginAlert(std::move(frameAlert)))
+            return false;
+          std::string frameDismissed;
+          if (source.takeDismiss(frameDismissed) && currentAlert.has_value() &&
+              (frameDismissed.empty() ||
+               frameDismissed == currentAlert->id) &&
+              !endAlert())
+            return false;
+          Status frameStatus;
+          if (source.take(frameStatus)) {
+            if (frameStatus.active != status.active)
+              liveIndicatorOn = true;
+            status = frameStatus;
+          }
+        }
       }
-      nextAnimation = Clock::now() + 33ms;
+      nextAnimation = Clock::now();
     }
     if (now >= nextShift) {
       if (!currentAlert.has_value() && awake && config.enabled &&
@@ -795,10 +830,10 @@ bool runDisplay(const Options &options, std::string &error) {
     const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
                                     nextLiveBlink, nextPlayback, nextAnimation,
                                     alertDeadline});
-    /* Always wait on the bus fd. poll(nullptr) used to hide Screen alerts
-     * while the 33 ms animation sleep ran. Status at 20 Hz only shortens
-     * the wait; the next loop drains it and sleeps the remainder. */
-    if (!source.waitUntil(nextWake, error))
+    /* Animation already waited its remainder. Do not sleep that interval
+     * again; other timers still wait on the bus fd. */
+    if (nextWake != nextAnimation &&
+        !source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */

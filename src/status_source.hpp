@@ -91,26 +91,40 @@ public:
       const uint64_t remaining = waitTimeoutUsec(Clock::now(), deadline);
       if (remaining == 0)
         return true;
-      const int fd = sd_bus_get_fd(bus_);
-      if (fd < 0)
-        return busError("bus fd", fd, error);
-      const int events = sd_bus_get_events(bus_);
-      if (events < 0)
-        return busError("bus events", events, error);
-      pollfd pfd{};
-      pfd.fd = fd;
-      pfd.events = static_cast<short>(events);
       const int timeoutMs = static_cast<int>(
           std::min<uint64_t>((remaining + 999U) / 1000U, 1000U));
-      const int result = ::poll(&pfd, 1, timeoutMs);
-      if (result < 0) {
-        if (errno == EINTR)
-          continue;
-        error = "wait for system bus: " + std::string(std::strerror(errno));
+      if (!waitRelativeMs(timeoutMs, error))
         return false;
-      }
       return true;
     }
+  }
+
+  /* Relative poll on the bus fd. Status at 20 Hz may return early; the
+   * caller must keep sleeping remaining RAW time, not retarget CLOCK_MONOTONIC. */
+  bool waitRelativeMs(int timeoutMs, std::string &error) {
+    if (bus_ == nullptr) {
+      error = "wait for system bus: not connected";
+      return false;
+    }
+    if (timeoutMs <= 0)
+      return true;
+    const int fd = sd_bus_get_fd(bus_);
+    if (fd < 0)
+      return busError("bus fd", fd, error);
+    const int events = sd_bus_get_events(bus_);
+    if (events < 0)
+      return busError("bus events", events, error);
+    pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = static_cast<short>(events);
+    const int result = ::poll(&pfd, 1, timeoutMs);
+    if (result < 0) {
+      if (errno == EINTR)
+        return true;
+      error = "wait for system bus: " + std::string(std::strerror(errno));
+      return false;
+    }
+    return true;
   }
 
   bool available() const { return available_; }
