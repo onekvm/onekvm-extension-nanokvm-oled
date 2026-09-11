@@ -12,6 +12,7 @@ namespace onekvm::oled {
 extern std::atomic_bool stopped;
 
 uint64_t waitTimeoutUsec(Clock::time_point now, Clock::time_point deadline);
+bool hasAnimationLayers(const Config &config);
 bool decodeStatus(std::string_view payload, Status &status,
                   std::string &error);
 bool controllerPlan(std::string_view input, std::string &output,

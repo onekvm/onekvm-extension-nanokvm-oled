@@ -324,6 +324,17 @@ int main() {
   assert(!inactiveLive.at(20, 20) && !inactiveLive.at(45, 20) &&
          inactiveLive.at(23, 21));
   assert(hasLiveLayer(extendedStatusConfig));
+  assert(!hasAnimationLayers(extendedStatusConfig));
+  {
+    Element animation;
+    animation.type = "animation";
+    animation.asset = "demo.oan";
+    extendedStatusConfig.layout.elements.push_back(animation);
+    assert(hasAnimationLayers(extendedStatusConfig));
+    extendedStatusConfig.layout.elements.back().hidden = true;
+    assert(!hasAnimationLayers(extendedStatusConfig));
+    extendedStatusConfig.layout.elements.pop_back();
+  }
 
   Layout adjustableLiveLayout;
   assert(parseLayout(

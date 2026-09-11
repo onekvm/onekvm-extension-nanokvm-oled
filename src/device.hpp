@@ -85,6 +85,8 @@ public:
 
   bool showChanged(const Canvas &previous, const Canvas &next,
                    std::string &error) {
+    if (previous == next)
+      return true;
     if (rtos_)
       return writeRtosFrame(next, error);
     const int pages = profile_.height / 8;

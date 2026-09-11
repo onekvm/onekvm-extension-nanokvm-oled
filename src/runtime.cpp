@@ -550,8 +550,9 @@ bool runDisplay(const Options &options, std::string &error) {
   Canvas lastFrame = frame;
   auto lastChange = Clock::now();
   auto nextConfig = Clock::now() + 500ms;
-  auto nextAnimation = config.enabled ? Clock::now() + 33ms
-                                       : Clock::time_point::max();
+  auto nextAnimation =
+      (config.enabled && hasAnimationLayers(config)) ? Clock::now() + 33ms
+                                                     : Clock::time_point::max();
   auto nextShift = Clock::now() + options.shiftInterval;
   auto nextSleep = Clock::now() + 1s;
   auto nextLiveBlink = Clock::now() + 1s;
@@ -644,9 +645,13 @@ bool runDisplay(const Options &options, std::string &error) {
     else if (settingsChanged || !liveFrames.has_value() ||
              (frameChanged && !hasAnimationLayers(config)))
       refreshLiveFrames();
-    if ((config.enabled || currentAlert.has_value()) &&
-        nextAnimation == Clock::time_point::max())
-      nextAnimation = Clock::now();
+    if (hasAnimationLayers(config) &&
+        (config.enabled || currentAlert.has_value())) {
+      if (nextAnimation == Clock::time_point::max())
+        nextAnimation = Clock::now();
+    } else {
+      nextAnimation = Clock::time_point::max();
+    }
     return true;
   };
   auto beginAlert = [&](OledAlert alert) -> bool {
@@ -733,12 +738,11 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
-      /* Overlay is painted inside render(). The 33 ms cadence stays the
-       * drawing pipeline; Screen alerts only change what the next frame
-       * composites. */
+      /* Overlay is painted inside render(). Keep 33 ms only while an
+       * animation layer is visible; identical canvases must not write. */
       animationTick++;
       const auto frameStart = monotonicNow();
-      if (!apply(config, status, false, true))
+      if (!apply(config, status, false))
         return false;
       constexpr auto kAnimationPeriod = 33ms;
       while (monotonicNow() - frameStart < kAnimationPeriod) {
