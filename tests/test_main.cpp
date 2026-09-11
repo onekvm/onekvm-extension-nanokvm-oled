@@ -142,6 +142,13 @@ int main() {
       }
     }
     assert(confirmFrame.at(0, barY) && barOn && barOff);
+    Config dashboard;
+    dashboard.layout = pcieDefaultLayout();
+    Canvas dashOnly = render(dashboard, Status{}, true, 64, 32);
+    Canvas pipelined =
+        render(dashboard, Status{}, true, 64, 32, &bootAlert);
+    assert(!(pipelined == dashOnly));
+    assert(pipelined.at(0, barY) && pipelined.at(0, pcieConfirm.elements[1].y));
   }
   assert(cubeLegacy.elements[0].y == 1 && cubeLegacy.elements[1].y == 17 &&
          cubeLegacy.elements[3].y == 49);

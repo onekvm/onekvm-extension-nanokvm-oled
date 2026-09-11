@@ -17,6 +17,7 @@ std::string expandTemplate(std::string value, const Status &status,
 bool hasLiveLayer(const Config &config);
 Canvas render(const Config &config, const Status &status,
               bool liveIndicatorOn = true, int displayWidth = kPcieWidth,
-              int displayHeight = kPcieHeight);
+              int displayHeight = kPcieHeight,
+              const OledAlert *alert = nullptr);
 
 } // namespace onekvm::oled

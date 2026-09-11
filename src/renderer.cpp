@@ -1,5 +1,7 @@
 #include "renderer.hpp"
 
+#include "config.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <map>
@@ -149,14 +151,9 @@ bool hasLiveLayer(const Config &config) {
                      });
 }
 
-Canvas render(const Config &config, const Status &status,
-              bool liveIndicatorOn, int displayWidth,
-              int displayHeight) {
-  Canvas canvas(displayWidth, displayHeight);
-  const int logicalWidth =
-      config.rotation == 90 || config.rotation == 270 ? displayHeight
-                                                       : displayWidth;
-  for (const Element &element : config.layout.elements) {
+void paintLayout(Canvas &canvas, const Layout &layout, const Config &config,
+                 const Status &status, bool liveIndicatorOn, int logicalWidth) {
+  for (const Element &element : layout.elements) {
     if (element.hidden)
       continue;
     if (element.type == "text") {
@@ -287,6 +284,22 @@ Canvas render(const Config &config, const Status &status,
                     contentHeight);
     }
   }
+}
+
+Canvas render(const Config &config, const Status &status,
+              bool liveIndicatorOn, int displayWidth, int displayHeight,
+              const OledAlert *alert) {
+  Canvas canvas(displayWidth, displayHeight);
+  const int logicalWidth =
+      config.rotation == 90 || config.rotation == 270 ? displayHeight
+                                                       : displayWidth;
+  paintLayout(canvas, config.layout, config, status, liveIndicatorOn,
+              logicalWidth);
+  if (alert != nullptr)
+    paintLayout(canvas,
+                layoutForScreenAlert(*alert, config.rotation, displayWidth,
+                                     displayHeight),
+                config, status, liveIndicatorOn, logicalWidth);
   return canvas;
 }
 

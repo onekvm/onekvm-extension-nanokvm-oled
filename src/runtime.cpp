@@ -522,13 +522,18 @@ bool runDisplay(const Options &options, std::string &error) {
           : std::filesystem::path{};
   uint64_t animationTick = 0;
   std::unordered_map<std::string, CachedAnimation> animationCache;
+  std::optional<OledAlert> currentAlert;
+  auto alertDeadline = Clock::time_point::max();
   auto renderDisplayFrame = [&](const Config &source, const Status &current,
-                                bool live) {
+                                bool live, bool withAlert = true) {
     Config animated = source;
     updateAnimationLayers(animated, animationRoot, animationTick,
                           animationCache);
     animated.rotation = deviceRotation(profile, source.rotation);
-    return render(animated, current, live, profile.width, profile.height);
+    const OledAlert *alert =
+        withAlert && currentAlert.has_value() ? &*currentAlert : nullptr;
+    return render(animated, current, live, profile.width, profile.height,
+                  alert);
   };
   Canvas frame = renderDisplayFrame(config, status, liveIndicatorOn);
   bool awake = config.enabled;
@@ -566,9 +571,9 @@ bool runDisplay(const Options &options, std::string &error) {
       return;
     }
     const Canvas off =
-        renderDisplayFrame(config, status, false);
+        renderDisplayFrame(config, status, false, false);
     const Canvas on =
-        renderDisplayFrame(config, status, true);
+        renderDisplayFrame(config, status, true, false);
     LiveFrameCache cache;
     for (std::size_t index = 0; index < shifts.size(); ++index) {
       cache[index][0] = off;
@@ -589,24 +594,14 @@ bool runDisplay(const Options &options, std::string &error) {
     return true;
   };
   refreshLiveFrames();
-  std::optional<OledAlert> currentAlert;
-  auto alertDeadline = Clock::time_point::max();
-  auto displayConfig = [&](const Config &base) {
-    if (!currentAlert.has_value())
-      return base;
-    Config overlay = base;
-    overlay.enabled = true;
-    overlay.layout = layoutForScreenAlert(
-        *currentAlert, overlay.rotation, profile.width, profile.height);
-    return overlay;
-  };
   auto apply = [&](const Config &nextConfigValue, const Status &nextStatus,
                    bool settingsChanged, bool forceShow = false) -> bool {
-    const Config visibleConfig = displayConfig(nextConfigValue);
-    Canvas nextFrame = renderDisplayFrame(visibleConfig, nextStatus,
+    Canvas nextFrame = renderDisplayFrame(nextConfigValue, nextStatus,
                                           liveIndicatorOn);
     const bool frameChanged = forceShow || !(nextFrame == lastFrame);
-    if (!visibleConfig.enabled) {
+    const bool showing =
+        nextConfigValue.enabled || currentAlert.has_value();
+    if (!showing) {
       if (awake && !device.off(error))
         return false;
       awake = false;
@@ -625,7 +620,7 @@ bool runDisplay(const Options &options, std::string &error) {
           return false;
         displayedFrame = Canvas(profile.width, profile.height);
       }
-      if (!visibleConfig.burnInProtection)
+      if (!nextConfigValue.burnInProtection)
         shiftIndex = 0;
       const int dx = shifts[static_cast<std::size_t>(shiftIndex)].first;
       const int dy = shifts[static_cast<std::size_t>(shiftIndex)].second;
@@ -649,7 +644,8 @@ bool runDisplay(const Options &options, std::string &error) {
     else if (settingsChanged || !liveFrames.has_value() ||
              (frameChanged && !hasAnimationLayers(config)))
       refreshLiveFrames();
-    if (config.enabled && nextAnimation == Clock::time_point::max())
+    if ((config.enabled || currentAlert.has_value()) &&
+        nextAnimation == Clock::time_point::max())
       nextAnimation = Clock::now();
     return true;
   };
@@ -737,43 +733,39 @@ bool runDisplay(const Options &options, std::string &error) {
       nextConfig = now + 500ms;
     }
     if (now >= nextAnimation) {
-      if (!currentAlert.has_value()) {
-        /* 33 ms includes render+show. Poll the bus for the remainder so a
-         * Screen alert can interrupt; 20 Hz Status only shortens this wait.
-         * Keep the leftover on CLOCK_MONOTONIC_RAW, not waitUntil(now+33ms). */
-        animationTick++;
-        const auto frameStart = monotonicNow();
-        if (!apply(config, status, false, true))
+      /* Overlay is painted inside render(). The 33 ms cadence stays the
+       * drawing pipeline; Screen alerts only change what the next frame
+       * composites. */
+      animationTick++;
+      const auto frameStart = monotonicNow();
+      if (!apply(config, status, false, true))
+        return false;
+      constexpr auto kAnimationPeriod = 33ms;
+      while (monotonicNow() - frameStart < kAnimationPeriod) {
+        const auto elapsed = monotonicNow() - frameStart;
+        const int remainMs = static_cast<int>(std::chrono::duration_cast<
+            std::chrono::milliseconds>(kAnimationPeriod - elapsed)
+                                                  .count());
+        if (remainMs <= 0)
+          break;
+        if (!source.waitRelativeMs(remainMs, error) ||
+            !source.process(error))
           return false;
-        constexpr auto kAnimationPeriod = 33ms;
-        while (!currentAlert.has_value()) {
-          const auto elapsed = monotonicNow() - frameStart;
-          if (elapsed >= kAnimationPeriod)
-            break;
-          const int remainMs = static_cast<int>(std::chrono::duration_cast<
-              std::chrono::milliseconds>(kAnimationPeriod - elapsed)
-                                                    .count());
-          if (remainMs <= 0)
-            break;
-          if (!source.waitRelativeMs(remainMs, error) ||
-              !source.process(error))
-            return false;
-          OledAlert frameAlert;
-          if (source.takeAlert(frameAlert) &&
-              !beginAlert(std::move(frameAlert)))
-            return false;
-          std::string frameDismissed;
-          if (source.takeDismiss(frameDismissed) && currentAlert.has_value() &&
-              (frameDismissed.empty() ||
-               frameDismissed == currentAlert->id) &&
-              !endAlert())
-            return false;
-          Status frameStatus;
-          if (source.take(frameStatus)) {
-            if (frameStatus.active != status.active)
-              liveIndicatorOn = true;
-            status = frameStatus;
-          }
+        OledAlert frameAlert;
+        if (source.takeAlert(frameAlert) &&
+            !beginAlert(std::move(frameAlert)))
+          return false;
+        std::string frameDismissed;
+        if (source.takeDismiss(frameDismissed) && currentAlert.has_value() &&
+            (frameDismissed.empty() ||
+             frameDismissed == currentAlert->id) &&
+            !endAlert())
+          return false;
+        Status frameStatus;
+        if (source.take(frameStatus)) {
+          if (frameStatus.active != status.active)
+            liveIndicatorOn = true;
+          status = frameStatus;
         }
       }
       nextAnimation = Clock::now();
