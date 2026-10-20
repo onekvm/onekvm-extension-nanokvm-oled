@@ -37,13 +37,44 @@
 
 恢复默认布局只会替换图层，不会改动屏幕开关、旋转方向、休眠时间或防烧屏设置。
 
+## 自定义变量
+
+文本图层可以写 `{c_name}`。已保存的变量存在扩展设置 `variables_json`，内容是一个 JSON 对象字符串。键以 `c_` 开头，后接字母、数字或下划线，总长 3–32；值最长 64 个字符；最多 32 项；整段最长 2048 字节。网页里的修改与画布一起保存，OLED 进程启动时读回来。
+
+正在运行的进程认领 `org.onekvm.NanoKvmOled1`。一次调用只改这个进程，不会写入 `variables_json`，重启后会丢失。本机用户都可以调用。`busctl` 在方法名后面要写类型串：`ss` 是两个字符串（先键后值），`s` 是一个字符串（要删除的键）。
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# 更新。键可以不写 c_，没有前缀会自动补上。只改正在运行的进程，重启后丢失。
+oled_var_update() {
+  busctl call org.onekvm.NanoKvmOled1 /org/onekvm/NanoKvmOled1 \
+    org.onekvm.NanoKvmOled1 VariableUpdate ss "$1" "$2"
+}
+
+# 删除。只传键。没有 c_ 会自动补上。键不存在也算成功。
+oled_var_remove() {
+  busctl call org.onekvm.NanoKvmOled1 /org/onekvm/NanoKvmOled1 \
+    org.onekvm.NanoKvmOled1 VariableRemove s "$1"
+}
+
+# room 会变成 c_room。文本图层写成 {c_room}。
+oled_var_update room A1
+oled_var_remove room
+```
+
+传入的键可以不写 `c_`，没有前缀会自动补上。`oled_var_update` 传键和值，`oled_var_remove` 只传键。
+
+在这个页面保存会写入 `variables_json` 并重启 OLED 进程。保存下来的变量表会覆盖进程启动之后用 D-Bus 改过的值。
+
 ## 安装与启用
 
 软件包名称是 `onekvm-extension-nanokvm-oled`。请通过 OneKVM 发行版的软件包或镜像安装；安装完成后，可以用插件管理器启用或停用：
 
 ```sh
-onekvm-plugin-manager enable nanokvm-oled
-onekvm-plugin-manager disable nanokvm-oled
+onekvm-extension enable nanokvm-oled
+onekvm-extension disable nanokvm-oled
 ```
 
 关闭扩展后，OLED 会先被清空并断电，后台显示进程也会退出，不会继续占用设备资源。

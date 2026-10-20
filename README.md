@@ -36,13 +36,44 @@ On NanoKVM Lite, the plugin manager prevents the extension from being enabled an
 
 Restoring the default layout only replaces the layer stack. It keeps the display, rotation, sleep, and burn-in settings unchanged.
 
+## Custom variables
+
+Text layers can include `{c_name}`. Saved values live in the extension setting `variables_json`, a string that contains a JSON object. A key starts with `c_` and then uses only letters, digits, and underscores, 3–32 characters in total. Each value is at most 64 characters, there are at most 32 entries, and the whole string is at most 2048 bytes. Edits made in the page are saved with the rest of the extension settings and restored when the OLED process starts.
+
+The running process owns `org.onekvm.NanoKvmOled1`. A call changes that process only. It is not written to `variables_json`, and a restart drops it. Any local user can call it. `busctl` needs a type string after the method name: `ss` is two strings (the key, then the value), and `s` is one string (the key to remove).
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Update. Pass the name with or without c_. A missing prefix is added.
+oled_var_update() {
+  busctl call org.onekvm.NanoKvmOled1 /org/onekvm/NanoKvmOled1 \
+    org.onekvm.NanoKvmOled1 VariableUpdate ss "$1" "$2"
+}
+
+# Remove. Pass only the name. A missing c_ is added. A missing key still succeeds.
+oled_var_remove() {
+  busctl call org.onekvm.NanoKvmOled1 /org/onekvm/NanoKvmOled1 \
+    org.onekvm.NanoKvmOled1 VariableRemove s "$1"
+}
+
+# room is sent as c_room. Text layers use {c_room}.
+oled_var_update room A1
+oled_var_remove room
+```
+
+Pass the name with or without `c_`. A missing prefix is added. `oled_var_update` takes the name and the value. `oled_var_remove` takes only the name.
+
+Saving this page writes `variables_json` and restarts the OLED process. That saved map replaces any D-Bus edits made since the process started.
+
 ## Install and enable
 
 The package name is `onekvm-extension-nanokvm-oled`. Install it through your OneKVM distribution package or image, then use the plugin manager to enable or disable it:
 
 ```sh
-onekvm-plugin-manager enable nanokvm-oled
-onekvm-plugin-manager disable nanokvm-oled
+onekvm-extension enable nanokvm-oled
+onekvm-extension disable nanokvm-oled
 ```
 
 When the extension is disabled, it clears and powers off the panel, removes the display instance, and stops the OLED process instead of leaving it running in the background.
