@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.hpp"
 #include "json.hpp"
 #include "runtime.hpp"
 #include "types.hpp"
@@ -11,9 +12,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <poll.h>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 
 namespace onekvm::oled {
@@ -21,6 +24,8 @@ namespace onekvm::oled {
 class StateSource {
 public:
   ~StateSource() {
+    sd_bus_slot_unref(objectSlot_);
+    sd_bus_slot_unref(nameLostSlot_);
     sd_bus_slot_unref(statusSlot_);
     sd_bus_slot_unref(ownerSlot_);
     sd_bus_slot_unref(alertSlot_);
@@ -62,9 +67,38 @@ public:
                               &StateSource::onDismissed, this);
     if (result < 0)
       return busError("subscribe screen dismissals", result, error);
+    if (!installObject(error))
+      return false;
+    const std::string lostMatch =
+        "type='signal',sender='org.freedesktop.DBus',path='/org/freedesktop/"
+        "DBus',interface='org.freedesktop.DBus',member='NameLost',arg0='" +
+        std::string(kOledBusName) + "'";
+    result = sd_bus_add_match(bus_, &nameLostSlot_, lostMatch.c_str(),
+                              &StateSource::onNameLost, this);
+    if (result < 0)
+      return busError("subscribe OLED name loss", result, error);
     fetch(error);
     return true;
   }
+
+  void bindVariables(std::map<std::string, std::string> *variables) {
+    variables_ = variables;
+  }
+
+  bool claimName(std::string &error) {
+    (void)error;
+    if (bus_ == nullptr)
+      return false;
+    const int result = sd_bus_request_name(bus_, kOledBusName.data(), 0);
+    if (result <= 0) {
+      std::fprintf(stderr, "onekvm-nanokvm-oled: %s: %s\n", kOledBusName.data(),
+                   std::strerror(result < 0 ? -result : EBUSY));
+      return true;
+    }
+    return true;
+  }
+
+  void setWakeFd(int wakeFd) { wakeFd_ = wakeFd; }
 
   bool process(std::string &error) {
     while (bus_ != nullptr) {
@@ -74,39 +108,30 @@ public:
       if (result == 0)
         break;
     }
-    if (!available_ && Clock::now() >= retryAt_) {
-      std::string ignored;
-      fetch(ignored);
-      retryAt_ = Clock::now() + 1s;
-    }
     return true;
   }
+
+  bool refresh(std::string &error) { return fetch(error); }
 
   bool waitUntil(Clock::time_point deadline, std::string &error) {
     if (bus_ == nullptr) {
       error = "wait for system bus: not connected";
       return false;
     }
-    for (;;) {
-      const uint64_t remaining = waitTimeoutUsec(Clock::now(), deadline);
-      if (remaining == 0)
-        return true;
-      const int timeoutMs = static_cast<int>(
-          std::min<uint64_t>((remaining + 999U) / 1000U, 1000U));
-      if (!waitRelativeMs(timeoutMs, error))
-        return false;
+    const int timeoutMs = pollTimeoutMs(deadline);
+    if (timeoutMs == 0)
       return true;
-    }
+    return waitRelativeMs(timeoutMs, error);
   }
 
-  /* Relative poll on the bus fd. Status at 20 Hz may return early; the
-   * caller must keep sleeping remaining RAW time, not retarget CLOCK_MONOTONIC. */
+  /* Relative poll on the bus fd and the playback wake fd. A negative
+   * timeout waits until one of those fds is readable. */
   bool waitRelativeMs(int timeoutMs, std::string &error) {
     if (bus_ == nullptr) {
       error = "wait for system bus: not connected";
       return false;
     }
-    if (timeoutMs <= 0)
+    if (timeoutMs == 0)
       return true;
     const int fd = sd_bus_get_fd(bus_);
     if (fd < 0)
@@ -114,10 +139,16 @@ public:
     const int events = sd_bus_get_events(bus_);
     if (events < 0)
       return busError("bus events", events, error);
-    pollfd pfd{};
-    pfd.fd = fd;
-    pfd.events = static_cast<short>(events);
-    const int result = ::poll(&pfd, 1, timeoutMs);
+    pollfd pfds[2]{};
+    nfds_t count = 1;
+    pfds[0].fd = fd;
+    pfds[0].events = static_cast<short>(events);
+    if (wakeFd_ >= 0) {
+      pfds[1].fd = wakeFd_;
+      pfds[1].events = POLLIN;
+      count = 2;
+    }
+    const int result = ::poll(pfds, count, timeoutMs);
     if (result < 0) {
       if (errno == EINTR)
         return true;
@@ -150,6 +181,39 @@ public:
     dismissUpdated_ = false;
     id = dismissedId_;
     return true;
+  }
+
+  bool takeVariablesChanged() {
+    if (!variablesChanged_)
+      return false;
+    variablesChanged_ = false;
+    return true;
+  }
+
+  bool takeNameLost() {
+    if (!nameLost_)
+      return false;
+    nameLost_ = false;
+    return true;
+  }
+
+  bool takeWake() {
+    if (wakeFd_ < 0)
+      return false;
+    bool woke = false;
+    for (;;) {
+      uint64_t value = 0;
+      const ssize_t n = ::read(wakeFd_, &value, sizeof(value));
+      if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+          break;
+        break;
+      }
+      if (n == 0)
+        break;
+      woke = true;
+    }
+    return woke;
   }
 
 private:
@@ -219,6 +283,72 @@ private:
     return 0;
   }
 
+  static int onNameLost(sd_bus_message *message, void *userdata,
+                        sd_bus_error *) {
+    auto *source = static_cast<StateSource *>(userdata);
+    const char *name = nullptr;
+    if (sd_bus_message_read(message, "s", &name) < 0 || name == nullptr)
+      return 0;
+    if (std::string_view(name) != kOledBusName)
+      return 0;
+    source->nameLost_ = true;
+    return 0;
+  }
+
+  static int onVariableUpdate(sd_bus_message *message, void *userdata,
+                              sd_bus_error *retError) {
+    auto *source = static_cast<StateSource *>(userdata);
+    const char *key = nullptr;
+    const char *value = nullptr;
+    if (sd_bus_message_read(message, "ss", &key, &value) < 0 || key == nullptr ||
+        value == nullptr)
+      return fail(retError, "invalid arguments");
+    std::string error;
+    if (source->variables_ == nullptr)
+      return fail(retError, "OLED variables are not ready");
+    if (!updateCustomVariable(*source->variables_, key, value, error))
+      return fail(retError, error.c_str());
+    source->variablesChanged_ = true;
+    return sd_bus_reply_method_return(message, "");
+  }
+
+  static int onVariableRemove(sd_bus_message *message, void *userdata,
+                              sd_bus_error *retError) {
+    auto *source = static_cast<StateSource *>(userdata);
+    const char *key = nullptr;
+    if (sd_bus_message_read(message, "s", &key) < 0 || key == nullptr)
+      return fail(retError, "invalid arguments");
+    std::string error;
+    if (source->variables_ == nullptr)
+      return fail(retError, "OLED variables are not ready");
+    if (!removeCustomVariable(*source->variables_, key, error))
+      return fail(retError, error.c_str());
+    source->variablesChanged_ = true;
+    return sd_bus_reply_method_return(message, "");
+  }
+
+  static int fail(sd_bus_error *retError, const char *message) {
+    sd_bus_error_setf(retError, kOledErrorFailed.data(), "%s",
+                      message != nullptr ? message : "OLED variable update failed");
+    return -EINVAL;
+  }
+
+  bool installObject(std::string &error) {
+    static const sd_bus_vtable vtable[] = {
+        SD_BUS_VTABLE_START(0),
+        SD_BUS_METHOD("VariableUpdate", "ss", "", &StateSource::onVariableUpdate,
+                      SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD("VariableRemove", "s", "", &StateSource::onVariableRemove,
+                      SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_VTABLE_END};
+    const int result =
+        sd_bus_add_object_vtable(bus_, &objectSlot_, kOledPath.data(),
+                                 kOledInterface.data(), vtable, this);
+    if (result < 0)
+      return busError("export OLED methods", result, error);
+    return true;
+  }
+
   bool fetch(std::string &error) {
     sd_bus_error busErrorValue = SD_BUS_ERROR_NULL;
     sd_bus_message *reply = nullptr;
@@ -253,6 +383,21 @@ private:
     return true;
   }
 
+  int pollTimeoutMs(Clock::time_point deadline) const {
+    if (deadline == Clock::time_point::max())
+      return -1;
+    const auto now = Clock::now();
+    if (deadline <= now)
+      return 0;
+    const uint64_t remaining = waitTimeoutUsec(now, deadline);
+    const uint64_t milliseconds = (remaining + 999ULL) / 1000ULL;
+    constexpr uint64_t cap =
+        static_cast<uint64_t>(std::numeric_limits<int>::max());
+    if (milliseconds > cap)
+      return std::numeric_limits<int>::max();
+    return static_cast<int>(milliseconds);
+  }
+
   static bool busError(std::string_view operation, int result,
                        std::string &error) {
     error = std::string(operation) + ": " + std::strerror(-result);
@@ -264,14 +409,19 @@ private:
   sd_bus_slot *ownerSlot_ = nullptr;
   sd_bus_slot *alertSlot_ = nullptr;
   sd_bus_slot *dismissSlot_ = nullptr;
+  sd_bus_slot *objectSlot_ = nullptr;
+  sd_bus_slot *nameLostSlot_ = nullptr;
+  std::map<std::string, std::string> *variables_ = nullptr;
   Status status_;
   OledAlert alert_;
   std::string dismissedId_;
+  int wakeFd_ = -1;
   bool available_ = false;
   bool updated_ = false;
   bool alertUpdated_ = false;
   bool dismissUpdated_ = false;
-  Clock::time_point retryAt_{};
+  bool variablesChanged_ = false;
+  bool nameLost_ = false;
 };
 
 } // namespace onekvm::oled

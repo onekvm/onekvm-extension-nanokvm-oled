@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <cstdio>
 #include <fcntl.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -608,8 +609,17 @@ void uploadAsset(int fd, const std::filesystem::path &root,
   response(fd, "201 Created", "application/json", "{\"status\":\"ok\"}");
 }
 
+void wakePlayback(int wakeFd) {
+  if (wakeFd < 0)
+    return;
+  const uint64_t one = 1;
+  if (::write(wakeFd, &one, sizeof(one)) < 0 && errno != EAGAIN)
+    std::fprintf(stderr, "onekvm-nanokvm-oled: playback wake: %s\n",
+                 std::strerror(errno));
+}
+
 void requestPlayback(int fd, const std::filesystem::path &root,
-                     const Request &request) {
+                     const Request &request, int wakeFd) {
   const std::string prefix = "/play?name=";
   const std::string name = request.target.substr(prefix.size());
   if (!safeName(name)) {
@@ -647,10 +657,11 @@ void requestPlayback(int fd, const std::filesystem::path &root,
              "could not queue playback");
     return;
   }
+  wakePlayback(wakeFd);
   response(fd, "202 Accepted", "application/json", "{\"status\":\"queued\"}");
 }
 
-void handle(int fd, const std::filesystem::path &root) {
+void handle(int fd, const std::filesystem::path &root, int wakeFd) {
   Request request;
   std::string error;
   if (!readRequest(fd, request, error)) {
@@ -683,7 +694,7 @@ void handle(int fd, const std::filesystem::path &root) {
     return;
   }
   if (request.method == "POST" && request.target.rfind("/play?name=", 0) == 0) {
-    requestPlayback(fd, root, request);
+    requestPlayback(fd, root, request, wakeFd);
     return;
   }
   response(fd, "404 Not Found", "text/plain", "not found");
@@ -747,7 +758,7 @@ bool configReferencesAsset(const std::string &path, std::string_view assetName,
 }
 
 bool runAssetServer(const std::string &socketPath, const std::string &dataPath,
-                    std::string &error) {
+                    std::string &error, int wakeFd) {
   std::error_code filesystemError;
   std::filesystem::create_directories(
       std::filesystem::path(socketPath).parent_path(), filesystemError);
@@ -796,7 +807,7 @@ bool runAssetServer(const std::string &socketPath, const std::string &dataPath,
         continue;
       break;
     }
-    handle(client, dataPath);
+    handle(client, dataPath, wakeFd);
     ::close(client);
   }
   ::close(server);

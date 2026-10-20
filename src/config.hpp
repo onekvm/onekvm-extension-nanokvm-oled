@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <string_view>
 
@@ -41,5 +42,10 @@ bool loadDisplayProfile(const std::string &profilePath,
 bool loadConfig(const std::string &path, Config &output, std::string &raw,
                 std::string &error, int displayWidth = kPcieWidth,
                 int displayHeight = kPcieHeight);
+bool updateCustomVariable(std::map<std::string, std::string> &variables,
+                          std::string_view key, std::string_view value,
+                          std::string &error);
+bool removeCustomVariable(std::map<std::string, std::string> &variables,
+                          std::string_view key, std::string &error);
 
 } // namespace onekvm::oled

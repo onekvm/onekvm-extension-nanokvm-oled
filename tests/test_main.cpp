@@ -497,6 +497,60 @@ int main() {
   assert(error.find("c_") != std::string::npos);
   ::unlink(path.c_str());
 
+  std::map<std::string, std::string> edited;
+  error.clear();
+  assert(updateCustomVariable(edited, "c_room", "A1", error));
+  assert(edited["c_room"] == "A1");
+  assert(updateCustomVariable(edited, "c_room", "", error));
+  assert(edited["c_room"].empty());
+  assert(updateCustomVariable(edited, "c_q", "a\"b\\c", error));
+  assert(edited["c_q"] == "a\"b\\c");
+  assert(updateCustomVariable(edited, "room", "A1", error));
+  assert(edited["c_room"] == "A1");
+  assert(edited.count("room") == 0);
+  assert(edited.size() == 2);
+  assert(!updateCustomVariable(edited, "c_room", std::string(65, 'b'), error));
+  assert(edited["c_room"] == "A1");
+  assert(!updateCustomVariable(edited, "c_room", "a\nb", error));
+  assert(error.find("control") != std::string::npos);
+  assert(edited["c_room"] == "A1");
+  assert(removeCustomVariable(edited, "c_missing", error));
+  assert(edited.size() == 2);
+  edited["bad"] = "x";
+  assert(removeCustomVariable(edited, "bad", error));
+  assert(edited.count("bad") == 0);
+  assert(removeCustomVariable(edited, "room", error));
+  assert(edited.count("c_room") == 0);
+  edited.clear();
+  for (int index = 0; index < 32; ++index) {
+    error.clear();
+    assert(updateCustomVariable(edited, "c_" + std::to_string(index), "x", error));
+  }
+  assert(edited.size() == 32);
+  error.clear();
+  assert(!updateCustomVariable(edited, "c_extra", "x", error));
+  assert(error.find("32") != std::string::npos);
+  assert(edited.size() == 32);
+  assert(updateCustomVariable(edited, "c_0", "y", error));
+  assert(edited["c_0"] == "y");
+  edited.clear();
+  const std::string longValue(64, 'a');
+  int added = 0;
+  for (int index = 0; index < 32; ++index) {
+    error.clear();
+    if (!updateCustomVariable(edited, "c_l" + std::to_string(index), longValue,
+                              error)) {
+      assert(error.find("2048") != std::string::npos);
+      break;
+    }
+    ++added;
+  }
+  assert(added > 0 && added < 32);
+  assert(static_cast<int>(edited.size()) == added);
+  error.clear();
+  assert(!updateCustomVariable(edited, "c_lover", longValue, error));
+  assert(static_cast<int>(edited.size()) == added);
+
   auto write16 = [](std::vector<unsigned char> &out, uint16_t value) {
     out.push_back(static_cast<unsigned char>(value));
     out.push_back(static_cast<unsigned char>(value >> 8));

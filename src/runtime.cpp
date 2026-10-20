@@ -22,6 +22,7 @@
 #include <optional>
 #include <vector>
 #include <signal.h>
+#include <sys/eventfd.h>
 #include <sys/resource.h>
 #include <string>
 #include <string_view>
@@ -68,6 +69,7 @@ struct Options {
   bool controller = false;
   bool off = false;
   bool assetsServer = false;
+  int playbackWake = -1;
 };
 
 std::string defaultConfigPath() {
@@ -215,8 +217,15 @@ bool runHealth(const Options &options, std::string &error) {
     return false;
   const auto deadline = Clock::now() + 3s;
   while (!source.available() && Clock::now() < deadline) {
-    if (!source.process(error) ||
-        (!source.available() && !source.waitUntil(deadline, error)))
+    if (!source.process(error))
+      return false;
+    if (source.available())
+      break;
+    std::string ignored;
+    (void)source.refresh(ignored);
+    if (source.available())
+      break;
+    if (!source.waitUntil(std::min(deadline, Clock::now() + 1s), error))
       return false;
   }
   if (!source.available()) {
@@ -495,17 +504,31 @@ bool runDisplay(const Options &options, std::string &error) {
     return false;
   chineseFont.configure(defaultFontPath());
   Config config;
-  std::string configRaw;
-  if (!loadConfig(options.config, config, configRaw, error, profile.width,
-                  profile.height))
-    return false;
+  {
+    std::string configRaw;
+    if (!loadConfig(options.config, config, configRaw, error, profile.width,
+                    profile.height) ||
+        configRaw.empty()) {
+      if (error.empty())
+        error = "OLED settings must be a JSON object";
+      return false;
+    }
+  }
   StateSource source;
   if (!source.connect(error))
     return false;
+  source.bindVariables(&config.variables);
+  (void)source.claimName(error);
   while (!stopped.load() && !source.available()) {
-    if (!source.process(error) ||
-        (!source.available() &&
-         !source.waitUntil(Clock::now() + 1s, error)))
+    if (!source.process(error))
+      return false;
+    if (source.available())
+      break;
+    std::string ignored;
+    (void)source.refresh(ignored);
+    if (source.available())
+      break;
+    if (!source.waitUntil(Clock::now() + 1s, error))
       return false;
   }
   if (stopped.load())
@@ -549,17 +572,15 @@ bool runDisplay(const Options &options, std::string &error) {
 
   Canvas lastFrame = frame;
   auto lastChange = Clock::now();
-  auto nextConfig = Clock::now() + 500ms;
   auto nextAnimation =
       (config.enabled && hasAnimationLayers(config)) ? Clock::now() + 33ms
                                                      : Clock::time_point::max();
   auto nextShift = Clock::now() + options.shiftInterval;
-  auto nextSleep = Clock::now() + 1s;
   const char *extensionData = std::getenv("ONEKVM_EXTENSION_DATA");
   const std::filesystem::path requestPath = extensionData != nullptr
       ? std::filesystem::path(extensionData) / ".play.request"
       : std::filesystem::path{};
-  auto nextPlayback = Clock::now() + 100ms;
+  source.setWakeFd(options.playbackWake);
   int shiftIndex = 0;
   static constexpr std::array<std::pair<int, int>, 4> shifts = {
       {{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
@@ -670,33 +691,54 @@ bool runDisplay(const Options &options, std::string &error) {
     alertDeadline = Clock::time_point::max();
     return apply(config, status, true, true);
   };
-
-  while (!stopped.load()) {
+  auto playRequested = [&]() -> bool {
+    if (requestPath.empty())
+      return true;
+    std::string requested;
+    if (!readPlaybackRequest(requestPath, requested))
+      return true;
+    const auto assetPath =
+        std::filesystem::path(extensionData) / "assets" / requested;
+    if (!std::filesystem::exists(assetPath))
+      return true;
+    if (!config.enabled && !device.initialize(error))
+      return false;
+    if (!playAsset(assetPath, device, profile,
+                   deviceRotation(profile, config.rotation), error))
+      return false;
+    if (config.enabled) {
+      if (!awake) {
+        awake = true;
+        displayedFrame = Canvas(profile.width, profile.height);
+      }
+      return showVisible(lastFrame);
+    }
+    return device.off(error);
+  };
+  auto consumeSource = [&]() -> bool {
     if (!source.process(error))
       return false;
+    if (source.takeNameLost()) {
+      std::string ignored;
+      (void)source.claimName(ignored);
+    }
     OledAlert nextAlert;
-    if (source.takeAlert(nextAlert)) {
-      if (!beginAlert(std::move(nextAlert)))
-        return false;
-    }
+    if (source.takeAlert(nextAlert) && !beginAlert(std::move(nextAlert)))
+      return false;
     std::string dismissedId;
-    if (source.takeDismiss(dismissedId)) {
-      if (currentAlert.has_value() &&
-          (dismissedId.empty() || dismissedId == currentAlert->id)) {
-        if (!endAlert())
-          return false;
-      }
-    }
-    if (currentAlert.has_value() && Clock::now() >= alertDeadline) {
-      if (!endAlert())
-        return false;
-    }
+    if (source.takeDismiss(dismissedId) && currentAlert.has_value() &&
+        (dismissedId.empty() || dismissedId == currentAlert->id) &&
+        !endAlert())
+      return false;
+    if (currentAlert.has_value() && Clock::now() >= alertDeadline &&
+        !endAlert())
+      return false;
     Status nextStatus;
     if (source.take(nextStatus)) {
       if (nextStatus.active != status.active)
         liveIndicatorOn = true;
-      /* Animation already redraws at 30 FPS. Do not let 20 Hz status
-       * updates serialize another full frame. */
+      /* Animation already redraws at 30 FPS. Do not let status updates
+       * serialize another full frame unless the session itself changed. */
       if (!hasAnimationLayers(config) ||
           nextStatus.active != status.active) {
         if (!apply(config, nextStatus, false))
@@ -705,42 +747,20 @@ bool runDisplay(const Options &options, std::string &error) {
         status = nextStatus;
       }
     }
+    if (source.takeVariablesChanged() && !apply(config, status, true))
+      return false;
+    return !source.takeWake() || playRequested();
+  };
+
+  while (!stopped.load()) {
+    if (!consumeSource())
+      return false;
     const auto now = Clock::now();
-    if (!requestPath.empty() && now >= nextPlayback) {
-      std::string requested;
-      if (readPlaybackRequest(requestPath, requested)) {
-        const auto assetPath = std::filesystem::path(extensionData) / "assets" / requested;
-        if (std::filesystem::exists(assetPath)) {
-          if (!config.enabled && !device.initialize(error)) return false;
-          if (!playAsset(assetPath, device, profile,
-                         deviceRotation(profile, config.rotation), error))
-            return false;
-          if (config.enabled) {
-            if (!awake) { awake = true; displayedFrame = Canvas(profile.width, profile.height); }
-            if (!showVisible(lastFrame)) return false;
-          } else {
-            if (!device.off(error)) return false;
-          }
-        }
-      }
-      nextPlayback = now + 100ms;
-    }
-    if (now >= nextConfig) {
-      Config loaded;
-      std::string raw;
-      std::string ignored;
-      if (loadConfig(options.config, loaded, raw, ignored, profile.width,
-                     profile.height) &&
-          raw != configRaw) {
-        if (!apply(loaded, status, true))
-          return false;
-        configRaw = std::move(raw);
-      }
-      nextConfig = now + 500ms;
-    }
+    bool pacedAnimation = false;
     if (now >= nextAnimation) {
       /* Overlay is painted inside render(). Keep 33 ms only while an
        * animation layer is visible; identical canvases must not write. */
+      pacedAnimation = true;
       animationTick++;
       const auto frameStart = monotonicNow();
       if (!apply(config, status, false))
@@ -753,63 +773,47 @@ bool runDisplay(const Options &options, std::string &error) {
                                                   .count());
         if (remainMs <= 0)
           break;
-        if (!source.waitRelativeMs(remainMs, error) ||
-            !source.process(error))
+        if (!source.waitRelativeMs(remainMs, error) || !consumeSource())
           return false;
-        OledAlert frameAlert;
-        if (source.takeAlert(frameAlert) &&
-            !beginAlert(std::move(frameAlert)))
-          return false;
-        std::string frameDismissed;
-        if (source.takeDismiss(frameDismissed) && currentAlert.has_value() &&
-            (frameDismissed.empty() ||
-             frameDismissed == currentAlert->id) &&
-            !endAlert())
-          return false;
-        Status frameStatus;
-        if (source.take(frameStatus)) {
-          if (frameStatus.active != status.active)
-            liveIndicatorOn = true;
-          status = frameStatus;
-        }
       }
       nextAnimation = Clock::now();
     }
-    if (now >= nextShift) {
-      if (!currentAlert.has_value() && awake && config.enabled &&
-          config.burnInProtection) {
-        shiftIndex = (shiftIndex + 1) % 4;
-        Canvas visible = liveFrames.has_value()
-                             ? (*liveFrames)[static_cast<std::size_t>(shiftIndex)]
-                                            [liveIndicatorOn ? 1U : 0U]
-                             : lastFrame;
-        if (!liveFrames.has_value())
-          visible.shift(shifts[static_cast<std::size_t>(shiftIndex)].first,
-                        shifts[static_cast<std::size_t>(shiftIndex)].second);
-        if (!showVisible(visible))
-          return false;
-      }
+    if (!currentAlert.has_value() && awake && config.enabled &&
+        config.burnInProtection && now >= nextShift) {
+      shiftIndex = (shiftIndex + 1) % 4;
+      Canvas visible = liveFrames.has_value()
+                           ? (*liveFrames)[static_cast<std::size_t>(shiftIndex)]
+                                          [liveIndicatorOn ? 1U : 0U]
+                           : lastFrame;
+      if (!liveFrames.has_value())
+        visible.shift(shifts[static_cast<std::size_t>(shiftIndex)].first,
+                      shifts[static_cast<std::size_t>(shiftIndex)].second);
+      if (!showVisible(visible))
+        return false;
       nextShift = now + options.shiftInterval;
     }
-    if (now >= nextSleep) {
-      /* A live HDMI session is not idle. Do not write frames just to
-       * keep lastChange fresh; skip auto-off while video is active. */
-      if (awake && config.sleepSeconds > 0 && !currentAlert.has_value() &&
-          !status.active &&
-          now - lastChange >= std::chrono::seconds(config.sleepSeconds)) {
-        if (!device.off(error))
-          return false;
-        awake = false;
-        displayedFrame.reset();
-      }
-      nextSleep = now + 1s;
+    /* A live HDMI session is not idle. Sleep until the saved deadline
+     * instead of polling once a second. */
+    if (awake && config.sleepSeconds > 0 && !currentAlert.has_value() &&
+        !status.active &&
+        now - lastChange >= std::chrono::seconds(config.sleepSeconds)) {
+      if (!device.off(error))
+        return false;
+      awake = false;
+      displayedFrame.reset();
+      nextShift = Clock::now() + options.shiftInterval;
     }
-    const auto nextWake = std::min({nextConfig, nextShift, nextSleep,
-                                    nextPlayback, nextAnimation, alertDeadline});
-    /* Animation already waited its remainder. Do not sleep that interval
-     * again; other timers still wait on the bus fd. */
-    if (nextWake != nextAnimation &&
-        !source.waitUntil(nextWake, error))
+    auto nextSleep = Clock::time_point::max();
+    if (awake && config.sleepSeconds > 0 && !currentAlert.has_value() &&
+        !status.active)
+      nextSleep = lastChange + std::chrono::seconds(config.sleepSeconds);
+    auto nextShiftWake = Clock::time_point::max();
+    if (!currentAlert.has_value() && awake && config.enabled &&
+        config.burnInProtection)
+      nextShiftWake = nextShift;
+    const auto nextWake =
+        std::min({nextShiftWake, nextSleep, nextAnimation, alertDeadline});
+    if (!pacedAnimation && !source.waitUntil(nextWake, error))
       return false;
   }
   /* C906L owns the panel. Leaving the last frame avoids 0xAE on restart. */
@@ -861,15 +865,23 @@ int applicationMain(int argc, char **argv) {
                 device.off(error);
     }
   } else {
-    const char *socket = std::getenv("ONEKVM_EXTENSION_SOCKET");
-    const char *data = std::getenv("ONEKVM_EXTENSION_DATA");
-    if (socket != nullptr && data != nullptr) {
-      std::thread([socketPath = std::string(socket), dataPath = std::string(data)] {
-        std::string ignored;
-        (void)runAssetServer(socketPath + "/assets.sock", dataPath + "/assets", ignored);
-      }).detach();
+    options.playbackWake = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (options.playbackWake < 0) {
+      error = std::string("eventfd: ") + std::strerror(errno);
+    } else {
+      const char *socket = std::getenv("ONEKVM_EXTENSION_SOCKET");
+      const char *data = std::getenv("ONEKVM_EXTENSION_DATA");
+      if (socket != nullptr && data != nullptr) {
+        std::thread([socketPath = std::string(socket),
+                     dataPath = std::string(data),
+                     wake = options.playbackWake] {
+          std::string ignored;
+          (void)runAssetServer(socketPath + "/assets.sock",
+                               dataPath + "/assets", ignored, wake);
+        }).detach();
+      }
+      success = runDisplay(options, error);
     }
-    success = runDisplay(options, error);
   }
   if (!success) {
     std::cerr << "onekvm-nanokvm-oled: " << error << '\n';

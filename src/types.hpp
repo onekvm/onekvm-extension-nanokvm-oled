@@ -29,6 +29,11 @@ inline constexpr std::string_view kStatusInterface =
     "org.onekvm.Core1.Status";
 inline constexpr std::string_view kScreenPath = "/org/onekvm/Screen";
 inline constexpr std::string_view kScreenInterface = "org.onekvm.Screen";
+inline constexpr std::string_view kOledBusName = "org.onekvm.NanoKvmOled1";
+inline constexpr std::string_view kOledPath = "/org/onekvm/NanoKvmOled1";
+inline constexpr std::string_view kOledInterface = "org.onekvm.NanoKvmOled1";
+inline constexpr std::string_view kOledErrorFailed =
+    "org.onekvm.NanoKvmOled1.Error.Failed";
 
 struct OledAlert {
   std::string id;

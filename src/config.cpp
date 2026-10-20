@@ -672,6 +672,16 @@ bool loadDisplayProfile(const std::string &profilePath,
   return displayProfileForVariant(variant, hardwareRevision, output, error);
 }
 
+std::string prefixCustomVariableKey(std::string_view key) {
+  if (key.size() >= 2 && key[0] == 'c' && key[1] == '_')
+    return std::string(key);
+  std::string prefixed;
+  prefixed.reserve(key.size() + 2);
+  prefixed.append("c_");
+  prefixed.append(key.data(), key.size());
+  return prefixed;
+}
+
 bool validCustomVariableKey(std::string_view key) {
   if (key.size() < 3 || key.size() > 32)
     return false;
@@ -785,6 +795,87 @@ bool loadConfig(const std::string &path, Config &output, std::string &raw,
     return false;
   return parseLayout(layoutJSON, lines, output.rotation, output.layout, error,
                      displayWidth, displayHeight, useDeviceDefault);
+}
+
+static std::size_t quotedJsonBytes(std::string_view value) {
+  std::size_t size = 2;
+  for (unsigned char current : value) {
+    switch (current) {
+    case '"':
+    case '\\':
+    case '\b':
+    case '\f':
+    case '\n':
+    case '\r':
+    case '\t':
+      size += 2;
+      break;
+    default:
+      size += current < 0x20 ? 6 : 1;
+      break;
+    }
+  }
+  return size;
+}
+
+static std::size_t variablesJsonBytes(
+    const std::map<std::string, std::string> &variables) {
+  if (variables.empty())
+    return 2;
+  std::size_t size = 1;
+  bool first = true;
+  for (const auto &[key, value] : variables) {
+    if (!first)
+      size += 1;
+    first = false;
+    size += quotedJsonBytes(key);
+    size += 1;
+    size += quotedJsonBytes(value);
+  }
+  return size + 1;
+}
+
+bool updateCustomVariable(std::map<std::string, std::string> &variables,
+                          std::string_view key, std::string_view value,
+                          std::string &error) {
+  const std::string stored = prefixCustomVariableKey(key);
+  if (!validCustomVariableKey(stored)) {
+    error = "OLED custom variable keys must start with c_";
+    return false;
+  }
+  if (value.size() > 64) {
+    error = "OLED custom variable " + stored + " is too long";
+    return false;
+  }
+  for (unsigned char current : value) {
+    if (current < 0x20) {
+      error = "OLED custom variable " + stored +
+              " contains a control character";
+      return false;
+    }
+  }
+  std::map<std::string, std::string> next = variables;
+  next.insert_or_assign(stored, std::string(value));
+  if (next.size() > 32) {
+    error = "OLED allows at most 32 custom variables";
+    return false;
+  }
+  if (variablesJsonBytes(next) > 2048) {
+    error = "OLED variables_json exceeds 2048 bytes";
+    return false;
+  }
+  variables.swap(next);
+  return true;
+}
+
+bool removeCustomVariable(std::map<std::string, std::string> &variables,
+                          std::string_view key, std::string &error) {
+  (void)error;
+  variables.erase(std::string(key));
+  const std::string prefixed = prefixCustomVariableKey(key);
+  if (prefixed != key)
+    variables.erase(prefixed);
+  return true;
 }
 
 } // namespace onekvm::oled

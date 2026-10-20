@@ -7,7 +7,7 @@ The OLED runtime is split by responsibility so each part can be read and changed
 | `main.cpp` | Process entry point only |
 | `runtime.cpp` | Command-line handling and the display lifecycle loop |
 | `device.hpp` | Low-level I2C OLED operations |
-| `status_source.hpp` | D-Bus subscription and status refresh handling |
+| `status_source.hpp` | D-Bus status subscription and in-memory variable methods |
 | `status.cpp` | Decoding Core status payloads |
 | `controller.cpp` | OneKVM extension lifecycle action planning |
 | `config.cpp` | Device profiles, settings, layouts, defaults, and Screen alert overlays |

@@ -6,7 +6,7 @@
 namespace onekvm::oled {
 
 bool runAssetServer(const std::string &socketPath, const std::string &dataPath,
-                    std::string &error);
+                    std::string &error, int wakeFd = -1);
 bool configReferencesAsset(const std::string &configPath,
                            std::string_view assetName, bool &referenced,
                            std::string &error);
