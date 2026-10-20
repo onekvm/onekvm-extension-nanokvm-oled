@@ -20,7 +20,7 @@ ONEKVM_EXTENSION_MANIFEST_TEMPLATE = "${S}/manifest.json.in"
 COMPATIBLE_MACHINE = "^onekvm-nanokvm$"
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 DEPENDS += "systemd"
-RDEPENDS:${PN} += "onekvm-core onekvm-plugin-manager"
+RDEPENDS:${PN} += "onekvm-core onekvm-extension-host"
 
 EXTRA_OEMAKE = "\
     -C ${S} \
@@ -43,4 +43,16 @@ do_compile() {
 
 do_install() {
     oe_runmake install
+}
+
+# Extension payloads cannot leave /data/onekvm/apps/<id>/<version>. The system
+# bus reads policy from /usr/share/dbus-1, so this file ships in a side package
+# that the extension depends on.
+PACKAGES += "${PN}-dbus"
+FILES:${PN}-dbus = "${datadir}/dbus-1/system.d/org.onekvm.NanoKvmOled1.conf"
+RDEPENDS:${PN} += "${PN}-dbus"
+
+do_install:append() {
+    install -Dm0644 ${S}/packaging/org.onekvm.NanoKvmOled1.conf \
+        ${D}${datadir}/dbus-1/system.d/org.onekvm.NanoKvmOled1.conf
 }

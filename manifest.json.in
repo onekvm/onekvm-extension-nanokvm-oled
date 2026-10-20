@@ -29,9 +29,9 @@
   "services": [{
     "id": "oled",
     "i18n": {
-      "default": {"name": "NanoKVM OLED", "description": "OLED display and animation assets."},
-      "zh": {"name": "NanoKVM OLED", "description": "OLED 显示与动图素材。"},
-      "zh-TW": {"name": "NanoKVM OLED", "description": "OLED 顯示與動圖素材。"}
+      "default": {"name": "NanoKVM OLED", "description": "OLED display service."},
+      "zh": {"name": "NanoKVM OLED", "description": "OLED 显示服务"},
+      "zh-TW": {"name": "NanoKVM OLED", "description": "OLED 顯示服務"}
     }
   }],
   "page": {
