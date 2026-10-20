@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NInput, NInputNumber, NModal, NPopconfirm, NProgress, NSelect, NTag } from 'naive-ui'
+import { NAlert, NButton, NCollapse, NCollapseItem, NInput, NInputNumber, NModal, NPopconfirm, NProgress, NSelect, NTag } from 'naive-ui'
 import { Download, LockKeyhole, UnlockKeyhole, Upload } from '@lucide/vue'
 import { translate, type MessageKey } from './i18n'
 import OledAssetPreview, { type OledAssetPreviewData } from './OledAssetPreview.vue'
@@ -368,10 +368,14 @@ onMounted(refresh)
   <section class="media-vue-stack">
     <NAlert v-if="error" type="error" closable @close="error = ''">{{ error }}</NAlert>
     <NAlert v-if="status" type="success" closable @close="status = ''">{{ status }}</NAlert>
-    <NCard class="media-vue-card" size="small">
-      <NCollapse>
-        <NCollapseItem name="upload" :title="t('uploadCardTitle')">
-          <p class="media-vue-hint">{{ t('mediaHint') }}</p>
+    <section class="card media-vue-card">
+      <header class="media-vue-header">
+        <div>
+          <h2>{{ t('uploadCardTitle') }}</h2>
+          <p>{{ t('mediaHint') }}</p>
+        </div>
+      </header>
+      <div class="media-vue-body">
           <div class="media-vue-file-transfer">
             <div><strong>{{ t('uploadAssetFile') }}</strong><span>{{ t('uploadAssetFileHint') }}</span></div>
             <input ref="assetFileInput" class="hidden" type="file" accept=".oan,application/octet-stream" @change="handleAssetFileChange">
@@ -389,7 +393,11 @@ onMounted(refresh)
               <NButton :disabled="busy || Boolean(pending)" :aria-label="t(ratioLocked ? 'ratioLocked' : 'ratioUnlocked')" @click="ratioLocked = !ratioLocked"><template #icon><LockKeyhole v-if="ratioLocked" :size="16" aria-hidden="true" /><UnlockKeyhole v-else :size="16" aria-hidden="true" /></template></NButton>
               <label><span>{{ t('mediaCustomHeight') }}</span><NInputNumber v-model:value="height" :min="8" :max="256" :step="8" :disabled="busy || Boolean(pending)" /></label>
             </div>
-            <details class="media-vue-advanced"><summary>{{ t('mediaAdvanced') }}</summary><div class="media-vue-advanced-fields"><label><span>{{ t('mediaFps') }}</span><NSelect v-model:value="fps" :options="fpsOptions" :disabled="busy || Boolean(pending)" /></label><label><span>{{ t('mediaFit') }}</span><NSelect v-model:value="fit" :options="fitOptions" :disabled="busy || Boolean(pending)" /></label></div></details>
+            <NCollapse class="media-vue-advanced">
+              <NCollapseItem :title="t('mediaAdvanced')" name="advanced">
+                <div class="media-vue-advanced-fields"><label><span>{{ t('mediaFps') }}</span><NSelect v-model:value="fps" :options="fpsOptions" :disabled="busy || Boolean(pending)" /></label><label><span>{{ t('mediaFit') }}</span><NSelect v-model:value="fit" :options="fitOptions" :disabled="busy || Boolean(pending)" /></label></div>
+              </NCollapseItem>
+            </NCollapse>
             <div class="media-vue-convert-actions"><NButton block :loading="converting" :disabled="!canConvert" @click="convert">{{ t('convertVideo') }}</NButton><NButton v-if="converting" secondary :disabled="conversionCancelled" @click="cancelConversion">{{ t('cancelConversion') }}</NButton></div>
             <div v-if="converting && totalFrames > 0" class="media-vue-progress">
               <NProgress type="line" :percentage="Math.round(progress * 100)" :processing="true" />
@@ -397,11 +405,13 @@ onMounted(refresh)
             </div>
           </div>
           <div v-if="pending" class="media-vue-pending"><OledAssetPreview :asset="pending" large :display-width="displayWidth" :display-height="displayHeight" /><div class="media-vue-actions"><NButton :loading="busy" @click="uploadPending">{{ t('uploadAsset') }}</NButton><NButton :disabled="busy" @click="resetPending">{{ t('reuploadAsset') }}</NButton></div></div>
-        </NCollapseItem>
-      </NCollapse>
-    </NCard>
-    <NCard class="media-vue-card" size="small" :title="t('libraryTitle')">
-      <template #header-extra><NTag>{{ assets.length }} {{ t('savedAsset') }}</NTag></template>
+      </div>
+    </section>
+    <section class="card media-vue-card">
+      <header class="media-vue-header">
+        <h2>{{ t('libraryTitle') }}</h2>
+        <NTag size="small">{{ assets.length }} {{ t('savedAsset') }}</NTag>
+      </header>
       <div class="media-vue-library-toolbar"><NInput v-model:value="search" clearable :placeholder="t('searchAssets')" /><NButton quaternary @click="refresh">{{ t('refreshAssets') }}</NButton></div>
       <div v-if="!filteredAssets.length" class="media-vue-empty">{{ t('noAssets') }}</div>
       <div v-else class="media-vue-list">
@@ -429,8 +439,8 @@ onMounted(refresh)
         <div class="media-vue-preview-header"><strong>{{ savedPreview.name }}</strong><NButton size="small" @click="savedPreview = null">{{ t('closePreview') }}</NButton></div>
         <OledAssetPreview :asset="savedPreview" large :display-width="displayWidth" :display-height="displayHeight" />
       </div>
-    </NCard>
-    <NModal v-model:show="renameOpen" preset="card" class="media-vue-rename-modal" :title="t('renameAsset')">
+    </section>
+    <NModal v-model:show="renameOpen" preset="card" to=".onekvm-oled-page .media-vue-stack" class="media-vue-rename-modal" :title="t('renameAsset')">
       <label class="media-vue-rename-field"><span>{{ t('assetName') }}</span><NInput v-model:value="renameName" :maxlength="92" /></label>
       <div class="media-vue-actions"><NButton :disabled="Boolean(renaming)" @click="renameOpen = false">{{ t('cancel') }}</NButton><NButton :loading="Boolean(renaming)" @click="confirmRename">{{ t('confirmRename') }}</NButton></div>
     </NModal>

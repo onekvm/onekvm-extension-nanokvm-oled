@@ -9,6 +9,8 @@ import { mountOLEDDesigner } from './oled.js'
 import MediaLibrary from './MediaLibrary.vue'
 import LayerList, { type LayerListItem } from './LayerList.vue'
 import LayerToolbar, { type LayerToolbarState } from './LayerToolbar.vue'
+import OledChrome, { type OledChromeState } from './OledChrome.vue'
+import VariablesPanel from './VariablesPanel.vue'
 
 type SettingValue = string | number | boolean | null
 type Settings = Record<string, SettingValue>
@@ -25,6 +27,7 @@ interface PageHost {
   extension: Readonly<{ value: { id?: string; settings: Settings } }>
   getStatus: () => Promise<unknown>
   invoke: <T = unknown>(method: string, payload?: unknown) => Promise<T>
+  saveSettings: () => Promise<boolean>
   registerSettings: (adapter: SettingsAdapter) => () => void
 }
 
@@ -51,6 +54,10 @@ const toolbarState = ref<LayerToolbarState>({
   canDelete: false, canCopy: false, canPaste: false, canMoveDown: false, canMoveUp: false, canCenter: false, canDistribute: false,
 })
 const locale = ref(detectLocale())
+const chromeState = ref<OledChromeState | null>(null)
+const chromeSlots = ref<Record<string, HTMLElement>>({})
+const editField = ref('')
+const editNonce = ref(0)
 let controller: ReturnType<typeof mountOLEDDesigner> | null = null
 let unregisterSettings: (() => void) | null = null
 let localeObserver: MutationObserver | null = null
@@ -73,6 +80,19 @@ const canvasActionOptions = computed(() => [
   { label: t('import'), key: 'import' },
   { label: t('export'), key: 'export', disabled: layerEmpty.value },
 ])
+const chromeLabels = computed(() => ({
+  display: t('display'), sleep: t('sleep'), burnIn: t('burnIn'),
+  content: t('content'), scale: t('scale'), fontWidth: t('fontWidth'), alignment: t('alignment'),
+  alignLeft: t('alignLeft'), alignCenter: t('alignCenter'), alignRight: t('alignRight'),
+  graphicMode: t('graphicMode'), customGraphic: t('customGraphic'), ethStatus: t('ethStatus'), hdmiStatus: t('hdmiStatus'),
+  hidStatus: t('hidStatus'), wifiStatus: t('wifiStatus'), liveStatus: t('liveStatus'), filled: t('filled'),
+  textAreaWidth: t('textAreaWidth'), fullWidth: t('fullWidth'), width: t('width'), height: t('height'),
+  statusContent: t('statusContent'), textContent: t('textContent'), fillWhenConnected: t('fillWhenConnected'), borderWhenConnected: t('borderWhenConnected'),
+  importImage: t('importImage'), clearPixels: t('clearPixels'), fillPixels: t('fillPixels'), invertPixels: t('invertPixels'),
+  fixedCropSize: t('fixedCropSize'), cropWidth: t('cropWidth'), cropHeight: t('cropHeight'),
+  outputWidth: t('outputWidth'), outputHeight: t('outputHeight'), trimBlank: t('trimBlank'), cancel: t('cancel'), applyImage: t('applyImage'),
+  animationAsset: t('animationAsset'),
+}))
 const rotationOptions = computed(() => [
   { label: t('rotation0'), value: 0 },
   { label: t('rotation90'), value: 90 },
@@ -80,9 +100,86 @@ const rotationOptions = computed(() => [
   { label: t('rotation270'), value: 270 },
 ])
 
+function markNativeChrome(doc: Document) {
+  doc.querySelectorAll('input, select, button').forEach((node) => {
+    if (!(node instanceof HTMLElement)) return
+    if (node instanceof HTMLInputElement && node.type === 'file') return
+    node.classList.add('oled-native-control')
+    node.tabIndex = -1
+    node.setAttribute('aria-hidden', 'true')
+  })
+  doc.querySelectorAll('label').forEach((label) => {
+    const control = label.querySelector('input, select, textarea')
+    if (!control || (control instanceof HTMLInputElement && control.type === 'file')) return
+    const div = doc.createElement('div')
+    div.className = label.className
+    if (label.id) div.id = label.id
+    for (const attr of [...label.attributes]) {
+      if (attr.name === 'class' || attr.name === 'id' || attr.name === 'for') continue
+      div.setAttribute(attr.name, attr.value)
+    }
+    if (!div.classList.contains('field') && !div.classList.contains('check-row') && !div.classList.contains('switch-row') && !div.classList.contains('toolbar-control')) {
+      div.classList.add('field')
+    }
+    while (label.firstChild) div.appendChild(label.firstChild)
+    label.replaceWith(div)
+  })
+  doc.querySelector('label[for="sleep"]')?.removeAttribute('for')
+  const slotAfter = (id: string, name: string) => {
+    const node = doc.getElementById(id)
+    if (!node) return
+    const slot = doc.createElement('div')
+    slot.className = 'naive-slot'
+    slot.dataset.slot = name
+    node.insertAdjacentElement('afterend', slot)
+  }
+  ;[
+    ['display-enabled', 'display'],
+    ['sleep', 'sleep'],
+    ['burn-in', 'burn-in'],
+    ['element-content', 'content'],
+    ['element-scale', 'scale'],
+    ['element-font-width', 'font-width'],
+    ['element-align', 'align'],
+    ['element-graphic-mode', 'graphic-mode'],
+    ['element-filled', 'filled'],
+    ['element-text-width', 'text-width'],
+    ['element-full-width', 'full-width'],
+    ['element-x2', 'x2'],
+    ['element-y2', 'y2'],
+    ['element-width', 'width'],
+    ['element-height', 'height'],
+    ['element-graphic-content', 'graphic-content'],
+    ['element-graphic-filled', 'graphic-filled'],
+    ['element-graphic-bordered', 'graphic-bordered'],
+    ['element-graphic-width', 'graphic-width'],
+    ['element-graphic-height', 'graphic-height'],
+    ['element-animation-asset', 'animation-asset'],
+    ['element-animation-width', 'animation-width'],
+    ['element-animation-height', 'animation-height'],
+    ['bitmap-import-fixed-crop', 'bitmap-fixed'],
+    ['bitmap-import-crop-width', 'bitmap-crop-width'],
+    ['bitmap-import-crop-height', 'bitmap-crop-height'],
+    ['bitmap-import-width', 'bitmap-output-width'],
+    ['bitmap-import-height', 'bitmap-output-height'],
+    ['bitmap-import-trim-blank', 'bitmap-trim'],
+  ].forEach(([id, name]) => slotAfter(id, name))
+  const appendSlot = (parent: Element | null, name: string, className: string) => {
+    if (!parent) return
+    const slot = doc.createElement('div')
+    slot.className = className
+    slot.dataset.slot = name
+    parent.append(slot)
+  }
+  appendSlot(doc.querySelector('.tokens'), 'tokens', 'naive-slot naive-slot-tokens')
+  appendSlot(doc.querySelector('.bitmap-actions'), 'bitmap-actions', 'naive-slot naive-slot-actions')
+  appendSlot(doc.querySelector('.bitmap-import-actions'), 'bitmap-import-actions', 'naive-slot naive-slot-actions')
+}
+
 const parsed = new DOMParser().parseFromString(pageHTML, 'text/html')
 parsed.querySelector('.actions')?.remove()
 parsed.querySelector('#error')?.remove()
+markNativeChrome(parsed)
 const pageMarkup = parsed.querySelector('main')?.outerHTML || ''
 
 onMounted(async () => {
@@ -112,6 +209,7 @@ onMounted(async () => {
     extension: props.host.extension,
     getStatus: props.host.getStatus,
     invoke: props.host.invoke,
+    saveSettings: () => props.host.saveSettings(),
     initialStatus,
     locale: locale.value,
     onError: (message: string) => { pageError.value = message },
@@ -128,7 +226,19 @@ onMounted(async () => {
     onLayersState: (items: LayerListItem[]) => { layers.value = items },
     onRotationState: (value: number) => { rotation.value = value },
     onToolbarState: (state: LayerToolbarState) => { toolbarState.value = state },
+    onChromeState: (state: OledChromeState) => { chromeState.value = state },
+    onEditField: (id: string) => {
+      editField.value = id
+      editNonce.value += 1
+      return true
+    },
   })
+  const slots: Record<string, HTMLElement> = {}
+  root.value.querySelectorAll<HTMLElement>('[data-slot]').forEach((node) => {
+    const name = node.dataset.slot
+    if (name) slots[name] = node
+  })
+  chromeSlots.value = slots
   unregisterSettings = props.host.registerSettings({
     dirty,
     valid,
@@ -171,6 +281,16 @@ function updateToolbar(field: 'name' | 'x' | 'y', value: string | number) {
 
 function runToolbarAction(action: string) {
   controller?.runToolbarAction(action)
+}
+
+function applyChrome(kind: string, value: unknown) {
+  controller?.applyChrome(kind, value)
+}
+
+async function saveVariables() {
+  if (!controller) return
+  pageError.value = ''
+  if (await controller.saveVariables()) pageNoticeKey.value = 'variablesSaved'
 }
 
 function chooseImport() {
@@ -242,6 +362,15 @@ onBeforeUnmount(() => {
       <NTabPane name="canvas" :tab="t('canvasTab')" display-directive="show">
         <div ref="root" v-html="pageMarkup" />
       </NTabPane>
+      <NTabPane name="variables" :tab="t('variables')" display-directive="show">
+        <VariablesPanel
+          :locale="locale"
+          :variables="chromeState?.variables ?? []"
+          :dirty="chromeState?.variablesDirty === true"
+          :save="saveVariables"
+          @update="applyChrome"
+        />
+      </NTabPane>
       <NTabPane name="media" :tab="t('mediaTab')" display-directive="show:lazy">
         <MediaLibrary :host="props.host" :locale="locale" :device-variant="deviceVariant" />
       </NTabPane>
@@ -298,7 +427,18 @@ onBeforeUnmount(() => {
         }"
         @update="updateToolbar"
         @action="runToolbarAction"
+        :edit-field="editField"
+        :edit-nonce="editNonce"
       />
     </Teleport>
+    <OledChrome
+      v-if="chromeState && Object.keys(chromeSlots).length"
+      :slots="chromeSlots"
+      :state="chromeState"
+      :labels="chromeLabels"
+      :edit-field="editField"
+      :edit-nonce="editNonce"
+      @update="applyChrome"
+    />
   </div>
 </template>

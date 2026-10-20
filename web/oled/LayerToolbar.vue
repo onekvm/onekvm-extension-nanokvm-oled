@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { NButton, NInput, NInputNumber, NTag, NText, NTooltip } from 'naive-ui'
 import {
   AlignHorizontalDistributeCenter,
@@ -34,7 +35,13 @@ export interface LayerToolbarState {
 const props = defineProps<{
   state: LayerToolbarState
   labels: Record<string, string>
+  editField?: string
+  editNonce?: number
 }>()
+const nameInput = ref<{ focus?: () => void } | null>(null)
+watch(() => props.editNonce, () => {
+  if (props.editField === 'toolbar-name') nameInput.value?.focus?.()
+}, { flush: 'post' })
 
 const emit = defineEmits<{
   update: [field: 'name' | 'x' | 'y', value: string | number]
@@ -57,6 +64,7 @@ function updateNumber(field: 'x' | 'y', value: number | null) {
 
     <template v-if="state.selectedCount === 1">
       <NInput
+        ref="nameInput"
         size="small"
         class="layer-toolbar-name"
         :value="state.name"

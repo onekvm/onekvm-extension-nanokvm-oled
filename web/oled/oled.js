@@ -318,6 +318,7 @@ export function mountOLEDDesigner(root, host) {
       select.replaceChildren(new Option(text.selectAnimationAsset, ''))
       animationAssets.forEach((asset) => select.append(new Option(asset.name, asset.id)))
       if (animationAssets.some((asset) => asset.id === current)) select.value = current
+      notifyChrome()
     } catch (_) {}
   }
 
@@ -517,9 +518,10 @@ export function mountOLEDDesigner(root, host) {
     status = host.initialStatus || await host.getStatus()
     configureDisplay(status)
     applySettings(host.extension.value.settings || {})
-    baselineSettings = JSON.stringify(collectSettings())
+    syncSettingBaselines()
     initialized = true
     notifySettingsState()
+    notifyChrome()
   }
 
   function configureDisplay(currentStatus) {
@@ -732,6 +734,7 @@ export function mountOLEDDesigner(root, host) {
     element('burn-in').checked = settings.burn_in_protection === true
     syncDimensionLimits()
     host.onRotationState?.(settings.rotation)
+    notifyChrome()
   }
 
   function syncDimensionLimits() {
@@ -746,6 +749,197 @@ export function mountOLEDDesigner(root, host) {
     settings.display_enabled = element('display-enabled').checked
     settings.burn_in_protection = element('burn-in').checked
     settings.sleep_seconds = clamp(integer(element('sleep').value, 3600), 0, 86400)
+  }
+
+  function chromeSnapshot() {
+    const size = logicalSize()
+    const items = selectedElements()
+    const item = items.length === 1 ? selectedElement() : null
+    const editableText = Boolean(item && (item.type === 'text' || item.type === 'rect' || (item.type === 'graphic' && item.mode !== 'custom' && item.content === 'text')))
+    const scalableText = editableText && !(item?.type === 'graphic' && item.mode === 'live')
+    const alignedText = Boolean(item && (item.type === 'text' || item.type === 'rect'))
+    const graphic = item?.type === 'graphic'
+    const statusGraphic = Boolean(graphic && item.mode !== 'custom')
+    const customPixels = Boolean(graphic && (item.mode === 'custom' || (item.mode !== 'live' && item.content === 'custom')))
+    const variables = parseVariables(settings.variables_json)
+    const tokens = [...root.querySelectorAll('.tokens > button[data-token]')].map((node) => node.dataset.token).filter(Boolean)
+    Object.keys(variables).forEach((key) => {
+      const token = `{${key}}`
+      if (!tokens.includes(token)) tokens.push(token)
+    })
+    const panel = element('bitmap-import-panel')
+    const bitmapOpen = Boolean(bitmapImport && panel && !panel.classList.contains('hidden'))
+    return {
+      displayEnabled: settings.display_enabled === true,
+      sleepSeconds: clamp(integer(settings.sleep_seconds, 3600), 0, 86400),
+      burnIn: settings.burn_in_protection === true,
+      variables: Object.keys(variables).map((key) => ({ key, value: variables[key] })),
+      variablesDirty: serializeVariables(variables) !== variablesBaseline,
+      inspector: item ? {
+        type: item.type,
+        showContent: editableText,
+        showScale: scalableText,
+        showFontWidth: editableText,
+        showAlign: alignedText,
+        showFilled: item.type === 'rect',
+        showGraphicMode: graphic,
+        showText: item.type === 'text',
+        showLine: item.type === 'line',
+        showRect: item.type === 'rect',
+        showGraphic: graphic,
+        showAnimation: item.type === 'animation',
+        showStatusStyle: statusGraphic && item.mode !== 'live',
+        customPixels,
+        content: item.text || '',
+        scale: item.scale === 2 ? 2 : 1,
+        fontWidth: [3, 4, 5].includes(item.font_width) ? item.font_width : 4,
+        align: textAlignments.includes(item.align) ? item.align : 'left',
+        filled: Boolean(item.filled),
+        graphicMode: graphicModes.includes(item.mode) ? item.mode : 'custom',
+        textWidth: item.type === 'text' ? textRegionWidth(item, size.width) : 1,
+        textWidthDisabled: item.type === 'text' && Boolean(item.full_width),
+        fullWidth: Boolean(item.full_width),
+        x2: integer(item.x2, 0),
+        y2: integer(item.y2, 0),
+        width: integer(item.width, 1),
+        height: integer(item.height, 1),
+        maxX: size.width - 1,
+        maxY: size.height - 1,
+        maxWidth: size.width,
+        maxHeight: size.height,
+        graphicContent: graphicContents.includes(item.content) ? item.content : 'text',
+        graphicFilled: Boolean(item.filled),
+        graphicBordered: Boolean(item.bordered),
+        animationAsset: item.asset || '',
+        animationOptions: [{ label: text.selectAnimationAsset, value: '' }, ...animationAssets.map((asset) => ({ label: asset.name, value: asset.id }))],
+        tokens,
+      } : null,
+      bitmapImport: bitmapOpen ? {
+        fixedCrop: Boolean(bitmapImport.fixedCrop),
+        cropWidth: bitmapImport.crop.width,
+        cropHeight: bitmapImport.crop.height,
+        cropMaxWidth: bitmapImport.image.naturalWidth,
+        cropMaxHeight: bitmapImport.image.naturalHeight,
+        outputWidth: bitmapImport.outputWidth,
+        outputHeight: bitmapImport.outputHeight,
+        outputMaxWidth: size.width,
+        outputMaxHeight: size.height,
+        trimBlank: Boolean(bitmapImport.trimBlank),
+      } : null,
+    }
+  }
+
+  function notifyChrome() {
+    host.onChromeState?.(chromeSnapshot())
+  }
+
+  function dispatchControl(id, value, eventName) {
+    const node = element(id)
+    if (!node) return
+    if (node.type === 'checkbox') node.checked = Boolean(value)
+    else node.value = value == null ? '' : String(value)
+    node.dispatchEvent(new Event(eventName, { bubbles: true }))
+  }
+
+  function insertToken(token) {
+    const item = selectedElement()
+    if (!item || item.type !== 'text' || !token) return
+    item.text = `${item.text}${token}`.slice(0, 128)
+    syncEditor()
+    if (host.onEditField?.('element-content')) return
+    const input = element('element-content')
+    input?.focus()
+    if (typeof input?.select === 'function') input.select()
+  }
+
+  function addVariable() {
+    const next = parseVariables(settings.variables_json)
+    let index = 1
+    let key = 'c_var'
+    while (next[key]) {
+      index += 1
+      key = `c_var${index}`
+    }
+    next[key] = ''
+    settings.variables_json = serializeVariables(next)
+    syncVariablesForm()
+    notifySettingsState()
+  }
+
+  function updateVariableKey(key, raw) {
+    const nextKey = normalizeVariableKey(raw)
+    if (!nextKey || nextKey === key || !/^c_[A-Za-z0-9_]{1,30}$/.test(nextKey)) return
+    const next = parseVariables(settings.variables_json)
+    if (next[key] === undefined) return
+    const current = next[key]
+    delete next[key]
+    next[nextKey] = current
+    settings.variables_json = serializeVariables(next)
+    syncVariablesForm()
+    notifySettingsState()
+    render()
+  }
+
+  function updateVariableValue(key, raw) {
+    const next = parseVariables(settings.variables_json)
+    if (next[key] === undefined) return
+    next[key] = String(raw || '').slice(0, 64)
+    settings.variables_json = serializeVariables(next)
+    notifyChrome()
+    notifySettingsState()
+    render()
+  }
+
+  function removeVariable(key) {
+    const next = parseVariables(settings.variables_json)
+    delete next[key]
+    settings.variables_json = serializeVariables(next)
+    syncVariablesForm()
+    notifySettingsState()
+    render()
+  }
+
+  function applyChrome(kind, value) {
+    if (kind === 'display') dispatchControl('display-enabled', value, 'change')
+    else if (kind === 'sleep') dispatchControl('sleep', value, 'change')
+    else if (kind === 'burn-in') dispatchControl('burn-in', value, 'change')
+    else if (kind === 'content') dispatchControl('element-content', value, 'input')
+    else if (kind === 'scale') dispatchControl('element-scale', value, 'change')
+    else if (kind === 'font-width') dispatchControl('element-font-width', value, 'change')
+    else if (kind === 'align') dispatchControl('element-align', value, 'change')
+    else if (kind === 'filled') dispatchControl('element-filled', value, 'change')
+    else if (kind === 'graphic-mode') dispatchControl('element-graphic-mode', value, 'change')
+    else if (kind === 'text-width') dispatchControl('element-text-width', value, 'input')
+    else if (kind === 'full-width') dispatchControl('element-full-width', value, 'change')
+    else if (kind === 'x2') dispatchControl('element-x2', value, 'input')
+    else if (kind === 'y2') dispatchControl('element-y2', value, 'input')
+    else if (kind === 'width') dispatchControl('element-width', value, 'input')
+    else if (kind === 'height') dispatchControl('element-height', value, 'input')
+    else if (kind === 'graphic-content') dispatchControl('element-graphic-content', value, 'change')
+    else if (kind === 'graphic-filled') dispatchControl('element-graphic-filled', value, 'change')
+    else if (kind === 'graphic-bordered') dispatchControl('element-graphic-bordered', value, 'change')
+    else if (kind === 'graphic-width') dispatchControl('element-graphic-width', value, 'input')
+    else if (kind === 'graphic-height') dispatchControl('element-graphic-height', value, 'input')
+    else if (kind === 'animation-asset') dispatchControl('element-animation-asset', value, 'change')
+    else if (kind === 'animation-width') dispatchControl('element-animation-width', value, 'input')
+    else if (kind === 'animation-height') dispatchControl('element-animation-height', value, 'input')
+    else if (kind === 'token') insertToken(value)
+    else if (kind === 'variable-add') addVariable()
+    else if (kind === 'variable-key') updateVariableKey(value?.key, value?.next)
+    else if (kind === 'variable-value') updateVariableValue(value?.key, value?.value)
+    else if (kind === 'variable-remove') removeVariable(value)
+    else if (kind === 'bitmap-clear') element('bitmap-clear')?.click()
+    else if (kind === 'bitmap-fill') element('bitmap-fill')?.click()
+    else if (kind === 'bitmap-invert') element('bitmap-invert')?.click()
+    else if (kind === 'bitmap-import-open') element('bitmap-import-open')?.click()
+    else if (kind === 'bitmap-fixed-crop') dispatchControl('bitmap-import-fixed-crop', value, 'change')
+    else if (kind === 'bitmap-crop-width') dispatchControl('bitmap-import-crop-width', value, 'input')
+    else if (kind === 'bitmap-crop-height') dispatchControl('bitmap-import-crop-height', value, 'input')
+    else if (kind === 'bitmap-trim') dispatchControl('bitmap-import-trim-blank', value, 'change')
+    else if (kind === 'bitmap-output-width') dispatchControl('bitmap-import-width', value, 'input')
+    else if (kind === 'bitmap-output-height') dispatchControl('bitmap-import-height', value, 'input')
+    else if (kind === 'bitmap-cancel') element('bitmap-import-cancel')?.click()
+    else if (kind === 'bitmap-apply') element('bitmap-import-apply')?.click()
   }
 
   function syncEditor() {
@@ -940,7 +1134,10 @@ export function mountOLEDDesigner(root, host) {
     element('distribute-horizontal').disabled = items.length < 3
     element('distribute-vertical').disabled = items.length < 3
     syncFloatingToolbar(item, items.length)
-    if (!item) return
+    if (!item) {
+      notifyChrome()
+      return
+    }
     syncTypeOptions(item)
     element('text-properties').classList.toggle('hidden', item.type !== 'text')
     element('line-properties').classList.toggle('hidden', item.type !== 'line')
@@ -977,6 +1174,7 @@ export function mountOLEDDesigner(root, host) {
       }
       if (customPixels) renderBitmapEditor(item)
     }
+    notifyChrome()
   }
 
   function syncFloatingToolbar(item, selectedCount) {
@@ -1169,9 +1367,10 @@ export function mountOLEDDesigner(root, host) {
     selectElement(item.id, false)
     const editableText = item.type === 'text' || item.type === 'rect' || (item.type === 'graphic' && item.mode !== 'custom' && item.content === 'text')
     const targetID = fieldID || (editableText ? 'element-content' : 'toolbar-name')
+    if (host.onEditField?.(targetID)) return
     const input = element(targetID)
-    input.focus()
-    if (typeof input.select === 'function') input.select()
+    input?.focus()
+    if (typeof input?.select === 'function') input.select()
   }
 
   function editCanvasElement(event) {
@@ -1462,83 +1661,53 @@ export function mountOLEDDesigner(root, host) {
   }
 
   function normalizeVariableKey(raw) {
-    const trimmed = String(raw || '').trim()
-    const withPrefix = trimmed.startsWith('c_') ? trimmed : `c_${trimmed}`
-    return withPrefix.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 32)
+    let suffix = String(raw || '').trim()
+    if (suffix.startsWith('c_')) suffix = suffix.slice(2)
+    suffix = suffix.replace(/[^A-Za-z0-9_]/g, '').slice(0, 30)
+    return suffix ? `c_${suffix}` : ''
   }
 
   function syncVariablesForm() {
     const list = element('variables-list')
-    if (!list) return
-    const values = parseVariables(settings.variables_json)
-    const keys = Object.keys(values)
-    list.replaceChildren()
-    keys.forEach((key) => {
-      const row = document.createElement('div')
-      row.className = 'variable-row'
-      const keyInput = document.createElement('input')
-      keyInput.value = key
-      keyInput.maxLength = 32
-      keyInput.setAttribute('aria-label', text.variableKey || 'Key')
-      const valueInput = document.createElement('input')
-      valueInput.value = values[key]
-      valueInput.maxLength = 64
-      valueInput.setAttribute('aria-label', text.variableValue || 'Value')
-      const remove = document.createElement('button')
-      remove.type = 'button'
-      remove.textContent = text.variableRemove || 'Remove'
-      keyInput.addEventListener('change', () => {
-        const nextKey = normalizeVariableKey(keyInput.value)
-        if (!/^c_[A-Za-z0-9_]{1,30}$/.test(nextKey)) return
-        const next = parseVariables(settings.variables_json)
-        const current = next[key]
-        delete next[key]
-        next[nextKey] = current
-        settings.variables_json = serializeVariables(next)
-        syncVariablesForm()
-        syncCustomTokens()
-        notifySettingsState()
-        render()
+    if (list && !host.onChromeState) {
+      const values = parseVariables(settings.variables_json)
+      list.replaceChildren()
+      Object.keys(values).forEach((key) => {
+        const row = document.createElement('div')
+        row.className = 'variable-row'
+        const keyInput = document.createElement('input')
+        keyInput.value = key
+        keyInput.maxLength = 32
+        keyInput.setAttribute('aria-label', text.variableKey || 'Key')
+        const valueInput = document.createElement('input')
+        valueInput.value = values[key]
+        valueInput.maxLength = 64
+        valueInput.setAttribute('aria-label', text.variableValue || 'Value')
+        const remove = document.createElement('button')
+        remove.type = 'button'
+        remove.textContent = text.variableRemove || 'Remove'
+        keyInput.addEventListener('change', () => updateVariableKey(key, keyInput.value))
+        valueInput.addEventListener('input', () => updateVariableValue(key, valueInput.value))
+        remove.addEventListener('click', () => removeVariable(key))
+        row.append(keyInput, valueInput, remove)
+        list.append(row)
       })
-      valueInput.addEventListener('input', () => {
-        const next = parseVariables(settings.variables_json)
-        next[key] = valueInput.value.slice(0, 64)
-        settings.variables_json = serializeVariables(next)
-        notifySettingsState()
-        render()
-      })
-      remove.addEventListener('click', () => {
-        const next = parseVariables(settings.variables_json)
-        delete next[key]
-        settings.variables_json = serializeVariables(next)
-        syncVariablesForm()
-        syncCustomTokens()
-        notifySettingsState()
-        render()
-      })
-      row.append(keyInput, valueInput, remove)
-      list.append(row)
-    })
+    }
     syncCustomTokens()
+    notifyChrome()
   }
 
   function syncCustomTokens() {
-    const host = element('custom-tokens')
-    if (!host) return
-    host.replaceChildren()
+    const tokenHost = element('custom-tokens')
+    if (!tokenHost || host.onChromeState) return
+    tokenHost.replaceChildren()
     Object.keys(parseVariables(settings.variables_json)).forEach((key) => {
       const button = document.createElement('button')
       button.type = 'button'
       button.dataset.token = `{${key}}`
       button.textContent = `{${key}}`
-      button.addEventListener('click', () => {
-        const item = selectedElement()
-        if (!item || item.type !== 'text') return
-        item.text = `${item.text}${button.dataset.token}`.slice(0, 128)
-        syncEditor()
-        element('element-content').focus()
-      })
-      host.append(button)
+      button.addEventListener('click', () => insertToken(button.dataset.token))
+      tokenHost.append(button)
     })
   }
 
@@ -2078,7 +2247,7 @@ export function mountOLEDDesigner(root, host) {
     return text.imported
   }
 
-  function collectSettings() {
+  function canvasPayload() {
     collectGlobalForm()
     return {
       display_enabled: settings.display_enabled,
@@ -2086,12 +2255,36 @@ export function mountOLEDDesigner(root, host) {
       rotation: settings.rotation,
       sleep_seconds: settings.sleep_seconds,
       layout_json: serializeLayout(),
-      variables_json: serializeVariables(parseVariables(settings.variables_json)),
     }
+  }
+
+  function collectSettings() {
+    if (savingVariablesOnly) {
+      return { variables_json: serializeVariables(parseVariables(settings.variables_json)) }
+    }
+    return { ...canvasPayload(), variables_json: variablesBaseline }
   }
 
   let initialized = false
   let baselineSettings = ''
+  let variablesBaseline = '{}'
+  let canvasBaseline = ''
+  let savingVariablesOnly = false
+
+  function syncSettingBaselines() {
+    variablesBaseline = serializeVariables(parseVariables(settings.variables_json))
+    canvasBaseline = JSON.stringify(canvasPayload())
+    baselineSettings = JSON.stringify(collectSettings())
+  }
+
+  async function saveVariables() {
+    savingVariablesOnly = true
+    try {
+      return await host.saveSettings()
+    } finally {
+      savingVariablesOnly = false
+    }
+  }
 
   function notifySettingsState() {
     if (!initialized) return
@@ -2105,11 +2298,33 @@ export function mountOLEDDesigner(root, host) {
   }
 
   function resetSettings(nextSettings) {
+    const canvasDraft = canvasPayload()
+    const canvasDirty = JSON.stringify(canvasDraft) !== canvasBaseline
+    const variableDraft = settings.variables_json
+    const variableDirty = serializeVariables(parseVariables(variableDraft)) !== variablesBaseline
     initialized = false
     applySettings(nextSettings || {})
-    baselineSettings = JSON.stringify(collectSettings())
+    if (canvasDirty) {
+      settings.display_enabled = canvasDraft.display_enabled
+      settings.burn_in_protection = canvasDraft.burn_in_protection
+      settings.rotation = canvasDraft.rotation
+      settings.sleep_seconds = canvasDraft.sleep_seconds
+      settings.layout_json = canvasDraft.layout_json
+      layout = parseLayout(canvasDraft.layout_json, settings)
+      syncGlobalForm()
+      syncEditor()
+    }
+    if (savingVariablesOnly || !variableDirty) {
+      variablesBaseline = serializeVariables(parseVariables(settings.variables_json))
+    } else {
+      settings.variables_json = variableDraft
+      syncVariablesForm()
+    }
+    if (!canvasDirty) canvasBaseline = JSON.stringify(canvasPayload())
+    baselineSettings = JSON.stringify({ ...JSON.parse(canvasBaseline), variables_json: variablesBaseline })
     initialized = true
     notifySettingsState()
+    notifyChrome()
   }
 
   function setError(message) {
@@ -2258,6 +2473,7 @@ export function mountOLEDDesigner(root, host) {
     bitmapImport = null
     if (bitmapImportObjectURL) URL.revokeObjectURL(bitmapImportObjectURL)
     bitmapImportObjectURL = ''
+    notifyChrome()
   }
 
   function bitmapImportPoint(event) {
@@ -2367,6 +2583,7 @@ export function mountOLEDDesigner(root, host) {
     for (let y = 0; y < pixels.height; y += 1) for (let x = 0; x < pixels.width; x += 1) {
       if (graphicPixel(pixels, x, y)) outputContext.fillRect(x * outputScale, y * outputScale, outputScale, outputScale)
     }
+    notifyChrome()
   }
 
   function loadBitmapImage(event) {
@@ -2519,22 +2736,10 @@ export function mountOLEDDesigner(root, host) {
   }
 
   function bind() {
-    element('display-enabled').addEventListener('change', () => { collectGlobalForm(); render() })
-    element('sleep').addEventListener('change', () => { collectGlobalForm(); notifySettingsState() })
-    element('burn-in').addEventListener('change', () => { collectGlobalForm(); notifySettingsState() })
-    element('variable-add')?.addEventListener('click', () => {
-      const next = parseVariables(settings.variables_json)
-      let index = 1
-      let key = 'c_var'
-      while (next[key]) {
-        index += 1
-        key = `c_var${index}`
-      }
-      next[key] = ''
-      settings.variables_json = serializeVariables(next)
-      syncVariablesForm()
-      notifySettingsState()
-    })
+    element('display-enabled').addEventListener('change', () => { collectGlobalForm(); notifyChrome(); render() })
+    element('sleep').addEventListener('change', () => { collectGlobalForm(); notifyChrome(); notifySettingsState() })
+    element('burn-in').addEventListener('change', () => { collectGlobalForm(); notifyChrome(); notifySettingsState() })
+    element('variable-add')?.addEventListener('click', addVariable)
     element('delete-element').addEventListener('click', deleteSelected)
     element('copy-element').addEventListener('click', copySelected)
     element('paste-element').addEventListener('click', pasteCopied)
@@ -2604,13 +2809,7 @@ export function mountOLEDDesigner(root, host) {
     element('bitmap-editor').addEventListener('pointerup', endBitmap)
     element('bitmap-editor').addEventListener('pointercancel', endBitmap)
     root.querySelectorAll('[data-token]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const item = selectedElement()
-        if (!item || item.type !== 'text') return
-        item.text = `${item.text}${button.dataset.token}`.slice(0, 128)
-        syncEditor()
-        element('element-content').focus()
-      })
+      button.addEventListener('click', () => insertToken(button.dataset.token))
     })
     preview.addEventListener('pointerdown', beginDrag)
     preview.addEventListener('pointermove', continueDrag)
@@ -2687,12 +2886,14 @@ export function mountOLEDDesigner(root, host) {
     reorderLayer: reorderLayerByDrop,
     updateToolbar,
     runToolbarAction,
+    applyChrome,
     exportLayers,
     importLayers,
     restoreDefaultCanvas,
     setRotation,
     setLocale,
     resetSettings,
+    saveVariables,
     dispose: () => {
       clearInterval(statusInterval)
       clearInterval(liveInterval)
