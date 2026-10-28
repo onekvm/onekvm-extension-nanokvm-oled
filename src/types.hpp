@@ -69,6 +69,7 @@ struct Status {
   int inputHeight = 0;
   std::string hostname;
   std::string ip;
+  std::vector<std::string> ipv4Addresses;
   int64_t uptime = 0;
   std::string machine;
   std::string version;

@@ -535,6 +535,8 @@ bool runDisplay(const Options &options, std::string &error) {
     return true;
   Status status;
   source.take(status);
+  IpRotation ipRotation;
+  ipRotation.update(status, Clock::now());
   Device device(profile);
   if (!openDisplay(device, profile.device, profile.address, 5s, error))
     return false;
@@ -555,7 +557,9 @@ bool runDisplay(const Options &options, std::string &error) {
     animated.rotation = deviceRotation(profile, source.rotation);
     const OledAlert *alert =
         withAlert && currentAlert.has_value() ? &*currentAlert : nullptr;
-    return render(animated, current, live, profile.width, profile.height,
+    Status displayed = current;
+    displayed.ip = ipRotation.current();
+    return render(animated, displayed, live, profile.width, profile.height,
                   alert);
   };
   Canvas frame = renderDisplayFrame(config, status, liveIndicatorOn);
@@ -735,6 +739,7 @@ bool runDisplay(const Options &options, std::string &error) {
       return false;
     Status nextStatus;
     if (source.take(nextStatus)) {
+      ipRotation.update(nextStatus, Clock::now());
       if (nextStatus.active != status.active)
         liveIndicatorOn = true;
       /* Animation already redraws at 30 FPS. Do not let status updates
@@ -756,6 +761,21 @@ bool runDisplay(const Options &options, std::string &error) {
     if (!consumeSource())
       return false;
     const auto now = Clock::now();
+    const bool rotateIp = awake && config.enabled &&
+        !currentAlert.has_value() &&
+        std::any_of(config.layout.elements.begin(), config.layout.elements.end(),
+                    [](const Element &element) {
+                      return !element.hidden && element.type == "text" &&
+                             element.text.find("{ip}") != std::string::npos;
+                    });
+    if (rotateIp && now >= ipRotation.deadline()) {
+      ipRotation.advance(now);
+      const auto previousChange = lastChange;
+      if (!apply(config, status, false))
+        return false;
+      // Cycling addresses is not activity and must not postpone screen-off.
+      lastChange = previousChange;
+    }
     bool pacedAnimation = false;
     if (now >= nextAnimation) {
       /* Overlay is painted inside render(). Keep 33 ms only while an
@@ -812,7 +832,8 @@ bool runDisplay(const Options &options, std::string &error) {
         config.burnInProtection)
       nextShiftWake = nextShift;
     const auto nextWake =
-        std::min({nextShiftWake, nextSleep, nextAnimation, alertDeadline});
+        std::min({nextShiftWake, nextSleep, nextAnimation, alertDeadline,
+                  rotateIp ? ipRotation.deadline() : Clock::time_point::max()});
     if (!pacedAnimation && !source.waitUntil(nextWake, error))
       return false;
   }

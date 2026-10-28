@@ -27,6 +27,7 @@ On NanoKVM Lite, the plugin manager prevents the extension from being enabled an
 - Manage layers with thumbnails, visibility controls, drag ordering, copy and paste, and keyboard shortcuts
 - Select several layers to center, align, or distribute them, and resize text areas, rectangles, and graphics directly on the canvas
 - Display the IPv4 address, hostname, codec, FPS, resolution, stream state, and uptime
+- `{ip}` starts with the preferred IPv4 address and cycles through all assigned addresses, including static fallback addresses, every 10 seconds. Removed addresses disappear automatically. Older Core versions that supply one address retain single-address display.
 - Add ETH, HDMI, HID, and Wi-Fi indicators, with separate styles for connected and disconnected states
 - Show live-viewing activity with `ON LIVE` text and a blinking status dot
 - Mix ASCII and common Simplified Chinese text, with 1×/2× scaling and 3×5, 4×5, or 5×5 Latin letter widths

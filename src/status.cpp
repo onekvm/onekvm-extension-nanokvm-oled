@@ -2,7 +2,31 @@
 
 #include "json.hpp"
 
+#include <algorithm>
+
 namespace onekvm::oled {
+
+void IpRotation::update(const Status &status, Clock::time_point now) {
+  auto addresses = status.ipv4Addresses;
+  if (addresses.empty() && !status.ip.empty())
+    addresses.push_back(status.ip);
+  if (addresses == addresses_)
+    return;
+  addresses_ = std::move(addresses);
+  index_ = 0;
+  deadline_ = addresses_.size() > 1 ? now + 10s : Clock::time_point::max();
+}
+
+void IpRotation::advance(Clock::time_point now) {
+  if (addresses_.size() < 2 || now < deadline_)
+    return;
+  index_ = (index_ + 1) % addresses_.size();
+  deadline_ = now + 10s;
+}
+
+std::string IpRotation::current() const {
+  return addresses_.empty() ? std::string{} : addresses_[index_];
+}
 
 bool decodeStatus(std::string_view payload, Status &status,
                   std::string &error) {
@@ -27,11 +51,31 @@ bool decodeStatus(std::string_view payload, Status &status,
                   status.hdmiConnected, error))
       return false;
   }
+  status.ip.clear();
+  status.ipv4Addresses.clear();
   if (const Json *network = root.get("network");
       network != nullptr && network->type == Json::Type::Object) {
     if (!jsonString(*network, "hostname", {}, status.hostname, error) ||
         !jsonString(*network, "ip", {}, status.ip, error))
       return false;
+    if (!status.ip.empty())
+      status.ipv4Addresses.push_back(status.ip);
+    if (const Json *addresses = network->get("ipv4_addresses")) {
+      if (addresses->type != Json::Type::Array) {
+        error = "ipv4_addresses must be an array";
+        return false;
+      }
+      for (const auto &address : addresses->array) {
+        if (address.type != Json::Type::String) {
+          error = "ipv4_addresses entries must be strings";
+          return false;
+        }
+        if (!address.string.empty() &&
+            std::find(status.ipv4Addresses.begin(), status.ipv4Addresses.end(),
+                      address.string) == status.ipv4Addresses.end())
+          status.ipv4Addresses.push_back(address.string);
+      }
+    }
     if (!jsonBool(*network, "ethernet_connected", !status.ip.empty(),
                   status.ethernetConnected, error))
       return false;

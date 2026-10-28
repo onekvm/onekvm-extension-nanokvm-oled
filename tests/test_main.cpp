@@ -456,6 +456,38 @@ int main() {
   assert(expandTemplate("{ip} {codec} {fps} {stream} {uptime}", decoded) ==
 	         "192.0.2.5 H264 47 STREAM ACTIVE 1H02M");
   assert(expandTemplate("{resolution}", decoded) == "1920x1080");
+  {
+    Status multiple;
+    assert(decodeStatus(
+        R"({"network":{"ip":"10.100.99.199","ipv4_addresses":["10.100.99.199","192.168.233.10","10.100.99.199",""]}})",
+        multiple, error));
+    assert(multiple.ipv4Addresses.size() == 2);
+    IpRotation rotation;
+    const auto start = Clock::time_point{};
+    rotation.update(multiple, start);
+    assert(rotation.current() == "10.100.99.199");
+    rotation.advance(start + 9999ms);
+    assert(rotation.current() == "10.100.99.199");
+    // Frequent Core updates must not reset the ten-second deadline.
+    rotation.update(multiple, start + 9s);
+    rotation.advance(start + 10s);
+    assert(rotation.current() == "192.168.233.10");
+    rotation.advance(start + 20s);
+    assert(rotation.current() == "10.100.99.199");
+    assert(decodeStatus(R"({"network":{"ip":"192.168.233.10"}})",
+                        multiple, error));
+    rotation.update(multiple, start + 21s);
+    assert(rotation.current() == "192.168.233.10");
+    assert(rotation.deadline() == Clock::time_point::max());
+    assert(decodeStatus(R"({"network":{"ip":""}})", multiple, error));
+    rotation.update(multiple, start + 22s);
+    assert(rotation.current().empty());
+    assert(expandTemplate("{ip}", multiple) == "--");
+    assert(!decodeStatus(R"({"network":{"ipv4_addresses":"bad"}})",
+                         multiple, error));
+    assert(!decodeStatus(R"({"network":{"ipv4_addresses":[42]}})",
+                         multiple, error));
+  }
   decoded.cpuPercent = 12;
   decoded.memoryUsed = 18ull * 1024 * 1024;
   decoded.memoryTotal = 32ull * 1024 * 1024;
