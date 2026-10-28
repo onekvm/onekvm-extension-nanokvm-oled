@@ -115,6 +115,8 @@ datalist { display: none; }
 }
 .media-vue-pending { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; }
 .layer-list-content { display: flex; width: 100%; align-items: center; gap: 9px; min-width: 0; }
+.layer-sort-list { position: relative; }
+.layer-list-row.is-dragging { opacity: .35; background: var(--accent); }
 .canvas-layers .n-list.n-list--hoverable .n-list-item { padding: 6px 10px; }
 .canvas-layers .n-list-item__prefix, .canvas-layers .n-list-item__suffix { display: flex; align-items: center; }
 .layer-list-thumbnail { width: 38px; height: 24px; flex: 0 0 auto; border: 1px solid var(--border); image-rendering: pixelated; object-fit: contain; }
