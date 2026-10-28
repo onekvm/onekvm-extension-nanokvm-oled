@@ -2,16 +2,16 @@
   "id": "nanokvm-oled",
   "i18n": {
     "default": {
-      "name": "NanoKVM OLED",
-      "description": "Designs and controls the NanoKVM OLED pixel canvas, viewing direction, sleep behavior, and burn-in protection."
+      "name": "OLED",
+      "description": "Edit what the SSD1306 screen shows, and set its direction, sleep, and burn-in protection."
     },
     "zh": {
-      "name": "NanoKVM OLED",
-      "description": "设计并控制 NanoKVM OLED 像素画布、观看方向、自动熄屏和防烧屏保护。"
+      "name": "OLED",
+      "description": "编辑小屏 (SSD1306) 上显示的内容，并设置方向、熄屏和防烧屏。"
     },
     "zh-TW": {
-      "name": "NanoKVM OLED",
-      "description": "設計並控制 NanoKVM OLED 像素畫布、觀看方向、自動熄屏和防燒屏保護。"
+      "name": "OLED",
+      "description": "編輯小螢幕 (SSD1306) 上顯示的內容，並設定方向、熄屏和防燒屏。"
     }
   },
   "version": "@VERSION@",
@@ -29,9 +29,9 @@
   "services": [{
     "id": "oled",
     "i18n": {
-      "default": {"name": "NanoKVM OLED", "description": "OLED display service."},
-      "zh": {"name": "NanoKVM OLED", "description": "OLED 显示服务"},
-      "zh-TW": {"name": "NanoKVM OLED", "description": "OLED 顯示服務"}
+      "default": {"name": "OLED", "description": "OLED display service."},
+      "zh": {"name": "OLED", "description": "OLED 显示服务"},
+      "zh-TW": {"name": "OLED", "description": "OLED 顯示服務"}
     }
   }],
   "page": {
@@ -44,8 +44,10 @@
     "type": "object",
     "additionalProperties": false,
     "required": [
-      "display_enabled", "burn_in_protection", "rotation",
-      "sleep_seconds", "layout_json"
+      "display_enabled",
+      "burn_in_protection",
+      "rotation",
+      "sleep_seconds"
     ],
     "properties": {
       "display_enabled": {"type": "boolean", "title": "Display", "default": true, "i18n": {"default": "Display", "zh": "OLED 显示", "zh-TW": "OLED 顯示"}},

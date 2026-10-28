@@ -44,7 +44,7 @@ assert.doesNotMatch(zhMessages, /D-Bus 调用/, 'the modal does not keep the D-B
 assert.match(variablesSource, /variablesDevLead[\s\S]*variables-dev-fields[\s\S]*variablesDevBashTitle[\s\S]*bashDemoText/, 'the modal shows the lead, a field table, then the bash demo')
 assert.match(variablesSource, /label: 'Key'[\s\S]*label: 'Value'[\s\S]*variablesDevCount[\s\S]*variablesDevText/, 'Key and Value stay in English; the other rows are translated')
 assert.match(variablesSource, /variablesDevBashComment/, 'the bash demo has one short comment')
-assert.match(zhMessages, /没带 c_ 会自动补上/, 'a missing c_ prefix is added')
+assert.match(zhMessages, /键名会自动加上 c_/, 'a missing c_ prefix is added')
 assert.match(zhMessages, /单独保存/, 'custom variables are saved on their own')
 assert.doesNotMatch(zhMessages, /一起保存/, 'variables are not saved with the rest of the page')
 assert.match(source, /prefixCustomVariableKey|startsWith\('c_'\)/, 'the page adds c_ only when it is missing')
