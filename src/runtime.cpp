@@ -608,7 +608,7 @@ bool runDisplay(const Options &options, std::string &error) {
     }
     liveFrames = std::move(cache);
   };
-  auto showVisible = [&](const Canvas &visible) -> bool {
+  auto showVisible = [&](const Canvas &visible, bool activity = true) -> bool {
     if (displayedFrame.has_value() && *displayedFrame == visible)
       return true;
     if (displayedFrame.has_value()) {
@@ -618,7 +618,8 @@ bool runDisplay(const Options &options, std::string &error) {
       return false;
     }
     displayedFrame = visible;
-    lastChange = Clock::now();
+    if (activity)
+      lastChange = Clock::now();
     return true;
   };
   refreshLiveFrames();
@@ -808,7 +809,8 @@ bool runDisplay(const Options &options, std::string &error) {
       if (!liveFrames.has_value())
         visible.shift(shifts[static_cast<std::size_t>(shiftIndex)].first,
                       shifts[static_cast<std::size_t>(shiftIndex)].second);
-      if (!showVisible(visible))
+      // Burn-in movement is not content activity and must not postpone sleep.
+      if (!showVisible(visible, false))
         return false;
       nextShift = now + options.shiftInterval;
     }

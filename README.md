@@ -33,7 +33,7 @@ On NanoKVM Lite, the plugin manager prevents the extension from being enabled an
 - Mix ASCII and common Simplified Chinese text, with 1×/2× scaling and 3×5, 4×5, or 5×5 Latin letter widths
 - Rotate the display to 0°, 90°, 180°, or 270° and preview the selected orientation accurately in the browser
 - Import or export the complete layout as versioned JSON, or restore the default layout for the current device
-- Put the panel to sleep after no visible state changes and periodically shift the output by one pixel to reduce burn-in
+- Put the panel to sleep after no visible content changes and periodically shift the output by one pixel to reduce burn-in. Protection shifts and IP address rotation do not extend the screen-off timer.
 
 Restoring the default layout only replaces the layer stack. It keeps the display, rotation, sleep, and burn-in settings unchanged.
 
