@@ -321,6 +321,37 @@ int main() {
   assert(!changedColumns(liveDotOn, liveDotOn, 0, 64).has_value());
   assert(liveDotOn == liveDotOn);
   assert(!(liveDotOn == liveDotOff));
+  {
+    LiveIndicator indicator;
+    assert(indicator.on());
+    assert(indicator.deadline() == Clock::time_point::max());
+    assert(!indicator.update(true, timerBase));
+    assert(indicator.deadline() == timerBase + 1s);
+    // Frequent Core status events must not postpone the next blink.
+    assert(!indicator.update(true, timerBase + 900ms));
+    assert(indicator.deadline() == timerBase + 1s);
+    assert(indicator.update(true, timerBase + 1s));
+    assert(render(extendedStatusConfig, extendedStatus, indicator.on()) ==
+           liveDotOff);
+    assert(!indicator.update(true, timerBase + 1500ms));
+    assert(indicator.update(true, timerBase + 2s));
+    assert(render(extendedStatusConfig, extendedStatus, indicator.on()) ==
+           liveDotOn);
+    // Playback delays skip missed phases and leave a future deadline.
+    assert(!indicator.update(true, timerBase + 4500ms));
+    assert(indicator.deadline() == timerBase + 5s);
+    assert(indicator.update(true, timerBase + 5s));
+    assert(!indicator.on());
+    // No wakeups when inactive, hidden, disabled, or covered by an alert.
+    assert(indicator.update(false, timerBase + 5100ms));
+    assert(indicator.on());
+    assert(indicator.deadline() == Clock::time_point::max());
+    assert(!indicator.update(false, timerBase + 20s));
+    assert(!indicator.update(true, timerBase + 30s));
+    assert(indicator.deadline() == timerBase + 31s);
+    assert(indicator.update(true, timerBase + 31s));
+    assert(!indicator.on());
+  }
   extendedStatus.active = false;
   Canvas inactiveLive = render(extendedStatusConfig, extendedStatus, true);
   assert(!inactiveLive.at(20, 20) && !inactiveLive.at(45, 20) &&

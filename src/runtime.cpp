@@ -54,6 +54,24 @@ uint64_t waitTimeoutUsec(Clock::time_point now, Clock::time_point deadline) {
   return static_cast<uint64_t>(std::max<int64_t>(1, timeout));
 }
 
+bool LiveIndicator::update(bool enabled, Clock::time_point now) {
+  const bool previous = on_;
+  if (!enabled) {
+    on_ = true;
+    deadline_ = Clock::time_point::max();
+  } else if (deadline_ == Clock::time_point::max()) {
+    deadline_ = now + 1s;
+  } else if (now >= deadline_) {
+    // Keep the cadence through status events and delayed playback, without
+    // replaying missed ticks as a burst of writes.
+    const auto ticks = (now - deadline_) / 1s + 1;
+    if (ticks % 2 != 0)
+      on_ = !on_;
+    deadline_ += ticks * 1s;
+  }
+  return on_ != previous;
+}
+
 std::atomic_bool stopped = false;
 extern "C" void stopSignal(int) { stopped.store(true); }
 
@@ -540,7 +558,9 @@ bool runDisplay(const Options &options, std::string &error) {
   Device device(profile);
   if (!openDisplay(device, profile.device, profile.address, 5s, error))
     return false;
-  bool liveIndicatorOn = true;
+  LiveIndicator liveIndicator;
+  liveIndicator.update(config.enabled && status.active && hasLiveLayer(config),
+                       Clock::now());
   const std::filesystem::path animationRoot =
       std::getenv("ONEKVM_EXTENSION_DATA") != nullptr
           ? std::filesystem::path(std::getenv("ONEKVM_EXTENSION_DATA")) / "assets"
@@ -562,7 +582,7 @@ bool runDisplay(const Options &options, std::string &error) {
     return render(animated, displayed, live, profile.width, profile.height,
                   alert);
   };
-  Canvas frame = renderDisplayFrame(config, status, liveIndicatorOn);
+  Canvas frame = renderDisplayFrame(config, status, liveIndicator.on());
   bool awake = config.enabled;
   std::optional<Canvas> displayedFrame;
   if (awake) {
@@ -626,7 +646,7 @@ bool runDisplay(const Options &options, std::string &error) {
   auto apply = [&](const Config &nextConfigValue, const Status &nextStatus,
                    bool settingsChanged, bool forceShow = false) -> bool {
     Canvas nextFrame = renderDisplayFrame(nextConfigValue, nextStatus,
-                                          liveIndicatorOn);
+                                          liveIndicator.on());
     const bool frameChanged = forceShow || !(nextFrame == lastFrame);
     const bool showing =
         nextConfigValue.enabled || currentAlert.has_value();
@@ -742,7 +762,7 @@ bool runDisplay(const Options &options, std::string &error) {
     if (source.take(nextStatus)) {
       ipRotation.update(nextStatus, Clock::now());
       if (nextStatus.active != status.active)
-        liveIndicatorOn = true;
+        liveIndicator.update(false, Clock::now());
       /* Animation already redraws at 30 FPS. Do not let status updates
        * serialize another full frame unless the session itself changed. */
       if (!hasAnimationLayers(config) ||
@@ -777,6 +797,20 @@ bool runDisplay(const Options &options, std::string &error) {
       // Cycling addresses is not activity and must not postpone screen-off.
       lastChange = previousChange;
     }
+    if (liveIndicator.update(awake && config.enabled && status.active &&
+                                 !currentAlert.has_value() && hasLiveLayer(config),
+                             now)) {
+      if (liveFrames.has_value() && !currentAlert.has_value() &&
+          !hasAnimationLayers(config)) {
+        const std::size_t phase = liveIndicator.on() ? 1U : 0U;
+        if (!showVisible((*liveFrames)[static_cast<std::size_t>(shiftIndex)]
+                                     [phase]))
+          return false;
+        lastFrame = (*liveFrames)[0][phase];
+      } else if (!apply(config, status, false)) {
+        return false;
+      }
+    }
     bool pacedAnimation = false;
     if (now >= nextAnimation) {
       /* Overlay is painted inside render(). Keep 33 ms only while an
@@ -804,7 +838,7 @@ bool runDisplay(const Options &options, std::string &error) {
       shiftIndex = (shiftIndex + 1) % 4;
       Canvas visible = liveFrames.has_value()
                            ? (*liveFrames)[static_cast<std::size_t>(shiftIndex)]
-                                          [liveIndicatorOn ? 1U : 0U]
+                                          [liveIndicator.on() ? 1U : 0U]
                            : lastFrame;
       if (!liveFrames.has_value())
         visible.shift(shifts[static_cast<std::size_t>(shiftIndex)].first,
@@ -835,6 +869,7 @@ bool runDisplay(const Options &options, std::string &error) {
       nextShiftWake = nextShift;
     const auto nextWake =
         std::min({nextShiftWake, nextSleep, nextAnimation, alertDeadline,
+                  liveIndicator.deadline(),
                   rotateIp ? ipRotation.deadline() : Clock::time_point::max()});
     if (!pacedAnimation && !source.waitUntil(nextWake, error))
       return false;
