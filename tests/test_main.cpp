@@ -490,21 +490,21 @@ int main() {
   {
     Status multiple;
     assert(decodeStatus(
-        R"({"network":{"ip":"10.100.99.199","ipv4_addresses":["10.100.99.199","192.168.233.10","10.100.99.199",""]}})",
+        R"({"network":{"ip":"198.51.100.25","ipv4_addresses":["198.51.100.25","192.168.233.10","198.51.100.25",""]}})",
         multiple, error));
     assert(multiple.ipv4Addresses.size() == 2);
     IpRotation rotation;
     const auto start = Clock::time_point{};
     rotation.update(multiple, start);
-    assert(rotation.current() == "10.100.99.199");
+    assert(rotation.current() == "198.51.100.25");
     rotation.advance(start + 9999ms);
-    assert(rotation.current() == "10.100.99.199");
+    assert(rotation.current() == "198.51.100.25");
     // Frequent Core updates must not reset the ten-second deadline.
     rotation.update(multiple, start + 9s);
     rotation.advance(start + 10s);
     assert(rotation.current() == "192.168.233.10");
     rotation.advance(start + 20s);
-    assert(rotation.current() == "10.100.99.199");
+    assert(rotation.current() == "198.51.100.25");
     assert(decodeStatus(R"({"network":{"ip":"192.168.233.10"}})",
                         multiple, error));
     rotation.update(multiple, start + 21s);
