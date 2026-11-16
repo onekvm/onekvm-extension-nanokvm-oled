@@ -9,6 +9,8 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 VERSION ?= 0.0.0-dev
 ARCH ?= unknown
+# Output of make web; package builds pass their own build of the sources.
+WEB_DIST ?= web/dist
 SOURCES := src/assets.cpp src/config.cpp src/controller.cpp src/json.cpp src/renderer.cpp \
 	src/runtime.cpp src/status.cpp
 HEADERS := $(wildcard src/*.hpp)
@@ -36,11 +38,11 @@ tests/test_main: tests/test_main.cpp $(SOURCES) $(HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ tests/test_main.cpp $(SOURCES) $(LDLIBS)
 
 install: $(BINARY)
-	if [ ! -f web/dist/oled-page.js ]; then $(MAKE) web; fi
-	test -f web/dist/oled-page.js
+	if [ ! -f $(WEB_DIST)/oled-page.js ]; then $(MAKE) web; fi
+	test -f $(WEB_DIST)/oled-page.js
 	install -Dm0755 $(BINARY) $(DESTDIR)$(PREFIX)/bin/onekvm-nanokvm-oled
 	install -Dm0755 $(OLED_PLAYER) $(DESTDIR)$(PREFIX)/bin/$(OLED_PLAYER)
-	install -Dm0644 web/dist/oled-page.js $(DESTDIR)$(PREFIX)/web/oled-page.js
+	install -Dm0644 $(WEB_DIST)/oled-page.js $(DESTDIR)$(PREFIX)/web/oled-page.js
 	install -Dm0644 web/oled/font-cjk-12.js $(DESTDIR)$(PREFIX)/web/font-cjk-12.js
 	install -Dm0644 fonts/LICENSE-OFL-1.1.txt $(DESTDIR)$(PREFIX)/fonts/LICENSE-OFL-1.1.txt
 	install -d $(DESTDIR)$(PREFIX)

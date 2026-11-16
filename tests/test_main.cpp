@@ -321,6 +321,37 @@ int main() {
   assert(!changedColumns(liveDotOn, liveDotOn, 0, 64).has_value());
   assert(liveDotOn == liveDotOn);
   assert(!(liveDotOn == liveDotOff));
+  {
+    LiveIndicator indicator;
+    assert(indicator.on());
+    assert(indicator.deadline() == Clock::time_point::max());
+    assert(!indicator.update(true, timerBase));
+    assert(indicator.deadline() == timerBase + 1s);
+    // Frequent Core status events must not postpone the next blink.
+    assert(!indicator.update(true, timerBase + 900ms));
+    assert(indicator.deadline() == timerBase + 1s);
+    assert(indicator.update(true, timerBase + 1s));
+    assert(render(extendedStatusConfig, extendedStatus, indicator.on()) ==
+           liveDotOff);
+    assert(!indicator.update(true, timerBase + 1500ms));
+    assert(indicator.update(true, timerBase + 2s));
+    assert(render(extendedStatusConfig, extendedStatus, indicator.on()) ==
+           liveDotOn);
+    // Playback delays skip missed phases and leave a future deadline.
+    assert(!indicator.update(true, timerBase + 4500ms));
+    assert(indicator.deadline() == timerBase + 5s);
+    assert(indicator.update(true, timerBase + 5s));
+    assert(!indicator.on());
+    // No wakeups when inactive, hidden, disabled, or covered by an alert.
+    assert(indicator.update(false, timerBase + 5100ms));
+    assert(indicator.on());
+    assert(indicator.deadline() == Clock::time_point::max());
+    assert(!indicator.update(false, timerBase + 20s));
+    assert(!indicator.update(true, timerBase + 30s));
+    assert(indicator.deadline() == timerBase + 31s);
+    assert(indicator.update(true, timerBase + 31s));
+    assert(!indicator.on());
+  }
   extendedStatus.active = false;
   Canvas inactiveLive = render(extendedStatusConfig, extendedStatus, true);
   assert(!inactiveLive.at(20, 20) && !inactiveLive.at(45, 20) &&
@@ -459,21 +490,21 @@ int main() {
   {
     Status multiple;
     assert(decodeStatus(
-        R"({"network":{"ip":"10.100.99.199","ipv4_addresses":["10.100.99.199","192.168.233.10","10.100.99.199",""]}})",
+        R"({"network":{"ip":"198.51.100.25","ipv4_addresses":["198.51.100.25","192.168.233.10","198.51.100.25",""]}})",
         multiple, error));
     assert(multiple.ipv4Addresses.size() == 2);
     IpRotation rotation;
     const auto start = Clock::time_point{};
     rotation.update(multiple, start);
-    assert(rotation.current() == "10.100.99.199");
+    assert(rotation.current() == "198.51.100.25");
     rotation.advance(start + 9999ms);
-    assert(rotation.current() == "10.100.99.199");
+    assert(rotation.current() == "198.51.100.25");
     // Frequent Core updates must not reset the ten-second deadline.
     rotation.update(multiple, start + 9s);
     rotation.advance(start + 10s);
     assert(rotation.current() == "192.168.233.10");
     rotation.advance(start + 20s);
-    assert(rotation.current() == "10.100.99.199");
+    assert(rotation.current() == "198.51.100.25");
     assert(decodeStatus(R"({"network":{"ip":"192.168.233.10"}})",
                         multiple, error));
     rotation.update(multiple, start + 21s);
