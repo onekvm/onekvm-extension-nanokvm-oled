@@ -15,6 +15,16 @@ uint64_t waitTimeoutUsec(Clock::time_point now, Clock::time_point deadline);
 bool hasAnimationLayers(const Config &config);
 bool decodeStatus(std::string_view payload, Status &status,
                   std::string &error);
+class LiveIndicator {
+public:
+  bool update(bool enabled, Clock::time_point now);
+  bool on() const { return on_; }
+  Clock::time_point deadline() const { return deadline_; }
+
+private:
+  bool on_ = true;
+  Clock::time_point deadline_ = Clock::time_point::max();
+};
 class IpRotation {
 public:
   void update(const Status &status, Clock::time_point now);

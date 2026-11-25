@@ -6,13 +6,11 @@ LIC_FILES_CHKSUM = "\
 "
 PR = "r1"
 
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 ONEKVM_COMPONENT_GIT_URI ??= "git://github.com/onekvm/onekvm-extension-nanokvm-oled.git;protocol=https;branch=main"
 ONEKVM_COMPONENT_SRCREV ??= ""
 SRC_URI = "${ONEKVM_COMPONENT_GIT_URI};destsuffix=${BP}"
-SRC_URI += "file://oled-page.js"
 SRCREV = "${ONEKVM_COMPONENT_SRCREV}"
-inherit pkgconfig onekvm-extension
+inherit pkgconfig onekvm-extension onekvm-web
 
 ONEKVM_EXTENSION_ID = "nanokvm-oled"
 ONEKVM_EXTENSION_API_VERSION = "2"
@@ -29,15 +27,13 @@ EXTRA_OEMAKE = "\
     PREFIX=${ONEKVM_EXTENSION_ROOT} \
     VERSION=${PV} \
     ARCH=${TARGET_ARCH} \
+    WEB_DIST=${ONEKVM_WEB_BUILD_DIR}/web/dist \
 "
 
 do_configure[noexec] = "1"
 
-do_compile:prepend() {
-    install -Dm0644 ${UNPACKDIR}/oled-page.js ${S}/web/dist/oled-page.js
-}
-
 do_compile() {
+    onekvm_web_build
     oe_runmake
 }
 
